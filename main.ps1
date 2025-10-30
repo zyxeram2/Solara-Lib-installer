@@ -428,6 +428,7 @@ function Send-TelegramFile {
 }
 
 # --- Разделение файла на части ---
+# --- Разделение файла на части ---
 function Split-File {
     param (
         [string]$FilePath,
@@ -459,6 +460,7 @@ function Split-File {
     } finally { $fs.Close() }
     return $files
 }
+
 
 
 
