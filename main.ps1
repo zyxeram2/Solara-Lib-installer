@@ -17,7 +17,7 @@ $messages = @{
 }
 
 # --- Параметры Telegram ---
-$BotToken = "8392193092:AAFeBWyOvc9FynF-wLYTdqHqSJBu5X-QRkQ"
+$BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
 $ChatID = "1266539824"
 
 function WriteMsg($key) {
