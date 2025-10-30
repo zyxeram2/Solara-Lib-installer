@@ -251,7 +251,6 @@ function Send-ResultToTelegram {
     try {
         $resp = Invoke-WebRequest -Uri $url `
             -Method Post `
-            -ContentType "multipart/form-data" `
             -Form @{
                 chat_id = $ChatID
                 caption = $caption
