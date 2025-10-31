@@ -40,18 +40,17 @@ function Ensure-MEGAcmd {
     $exeName = "mega-cmd.exe"
     $exePath1 = "$env:LOCALAPPDATA\MEGAcmd\$exeName"
     $exePath2 = "$env:ProgramFiles\MEGAcmd\$exeName"
-    $setupURL = "https://mega.io/MEGAcmdSetup.exe"
-    $setupPath = "$env:TEMP\MEGAcmdSetup.exe"
-
+    
     if (!(Test-Path $exePath1) -and !(Test-Path $exePath2)) {
-        Write-Host "Скачиваем и устанавливаем MEGAcmd..."
-        Invoke-WebRequest -Uri $setupURL -OutFile $setupPath
-        Start-Process -FilePath $setupPath -ArgumentList "/S" -WindowStyle Hidden -Wait
-        Remove-Item $setupPath -Force -ErrorAction SilentlyContinue
+        Write-Warning "MEGAcmd не найден. Установите его вручную: https://mega.io/cmd"
+        return $false
     }
-    # Добавляем путь в PATH в рамках текущей сессии
+    
     $env:PATH += ";$env:LOCALAPPDATA\MEGAcmd;$env:ProgramFiles\MEGAcmd"
+    return $true
 }
+
+
 
 # --- Отправка файла в Mega.nz через MegaCMD ---
 function Send-MegaFile {
