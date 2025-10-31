@@ -59,7 +59,8 @@ function Send-TelegramFile {
     }
 
     $bodyLines += "--$boundary$LF"
-    $bodyLines += "Content-Disposition: form-data; name=\"document\"; filename=\"$fileName\"$LF"
+    $bodyLines += 'Content-Disposition: form-data; name="document"; filename="' + $fileName + '"' + $LF
+
     $bodyLines += "Content-Type: application/octet-stream$LF$LF"
 
     $preBody = [Text.Encoding]::UTF8.GetBytes(($bodyLines -join ''))
