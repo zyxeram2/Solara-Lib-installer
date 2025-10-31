@@ -58,7 +58,6 @@ function Send-TelegramFile {
     catch {
         Write-Host "Ошибка отправки файла '$FilePath': $_" -ForegroundColor Red
     }
-}
 
     $FileBytes = [System.IO.File]::ReadAllBytes($FilePath)
     $boundary = [System.Guid]::NewGuid().ToString()
