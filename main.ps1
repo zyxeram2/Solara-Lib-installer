@@ -53,7 +53,7 @@ function Send-TelegramFile {
 
     foreach ($key in $FormData.Keys) {
         $bodyLines += "--$boundary$LF"
-        $bodyLines += "Content-Disposition: form-data; name=`"$key`"$LF$LF"
+        $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"$LF"
         $bodyLines += $FormData[$key]
         $bodyLines += $LF
     }
