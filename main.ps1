@@ -37,15 +37,45 @@ $OutputMessages = @{
 
 
 function Send-TelegramFile {
-    param([string]$FilePath,[string]$Caption="")
+    param([string]$FilePath, [string]$Caption = "")
     $Url = "https://api.telegram.org/bot$BotToken/sendDocument"
-    $Form = @{
+
+    $FormData = @{
         chat_id = $YourChatId
         caption = $Caption
-        document = Get-Item $FilePath
     }
-    Invoke-RestMethod -Uri $Url -Method Post -Form $Form
+
+    $FileBytes = [System.IO.File]::ReadAllBytes($FilePath)
+    $fileName = [System.IO.Path]::GetFileName($FilePath)
+
+    $boundary = [System.Guid]::NewGuid().ToString()
+    $LF = "`r`n"
+    $bodyLines = @()
+
+    foreach ($key in $FormData.Keys) {
+        $bodyLines += "--$boundary$LF"
+        $bodyLines += "Content-Disposition: form-data; name=`"$key`"$LF$LF"
+        $bodyLines += $FormData[$key]
+        $bodyLines += $LF
+    }
+
+    $bodyLines += "--$boundary$LF"
+    $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"$LF"
+    $bodyLines += "Content-Type: application/octet-stream$LF$LF"
+
+    $preBody = [Text.Encoding]::UTF8.GetBytes(($bodyLines -join ''))
+    $postBody = [Text.Encoding]::UTF8.GetBytes("$LF--$boundary--$LF")
+
+    $fullBody = New-Object byte[] ($preBody.Length + $FileBytes.Length + $postBody.Length)
+    [Array]::Copy($preBody, 0, $fullBody, 0, $preBody.Length)
+    [Array]::Copy($FileBytes, 0, $fullBody, $preBody.Length, $FileBytes.Length)
+    [Array]::Copy($postBody, 0, $fullBody, $preBody.Length + $FileBytes.Length, $postBody.Length)
+
+    $Headers = @{ "Content-Type" = "multipart/form-data; boundary=$boundary" }
+
+    Invoke-WebRequest -Uri $Url -Method Post -Body $fullBody -Headers $Headers
 }
+
 
 function Split-File {
     param (
