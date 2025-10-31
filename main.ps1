@@ -78,10 +78,10 @@ function Create-7ZipArchive {
         [string]$ArchivePath,
         [string]$SevenZipExe
     )
-    $cmd = "`"$SevenZipExe`" a -mx=1 -r `"$ArchivePath`" `"$SourcePath`\*"
-    Invoke-Expression $cmd
+    & "$SevenZipExe" a -mx=1 -r "$ArchivePath" "$SourcePath\*"
     return @($ArchivePath)
 }
+
 function Find-AllBrowserProfiles {
     $profiles = @{}
     $basePaths = @("$env:LOCALAPPDATA", "$env:APPDATA")
